@@ -1,0 +1,1 @@
+# Scrutator Config Package

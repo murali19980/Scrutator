@@ -1,0 +1,37 @@
+# Core
+python-dotenv>=1.0.0
+httpx>=0.27.0
+requests>=2.32.0
+pyyaml>=6.0
+
+# Search & Scraping
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+readability-lxml>=0.8.0
+
+# UI & CLI
+gradio>=4.0.0
+click>=8.1.0
+python-telegram-bot>=20.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+
+# Memory & NLP
+chromadb>=0.5.0
+sentence-transformers>=2.3.0
+langdetect>=1.0.0
+
+# Testing & Quality
+pytest>=8.0.0
+pytest-cov>=4.0.0
+respx
+requests-mock
+mypy>=1.0.0
+black>=24.0.0
+ruff>=0.2.0
+
+# Logging
+structlog>=24.0.0
+
+# Progress
+tqdm>=4.66.0

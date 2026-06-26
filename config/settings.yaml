@@ -1,0 +1,51 @@
+# Scrutator Configuration
+
+model:
+  provider: "openrouter"           # openrouter, openai, anthropic, ollama
+  model: "openrouter/free"        # or specific model names
+  temperature: 0.7
+  max_tokens: 4096
+  timeout: 60
+
+search:
+  searxng_url: "http://localhost:8888"
+  max_results_per_language: 10
+  timeout: 10
+  fallback_to_public: true
+  public_engines:
+    - "duckduckgo"
+    - "google"  # via SearXNG public instances
+
+research:
+  default_mode: "balanced"
+  loop_limits:
+    quick: 3
+    balanced: 7
+    deep: 15
+  confidence_threshold: 85
+  min_sources: 10
+  stop_early: true
+  semantic_similarity_threshold: 0.8
+
+translation:
+  enabled: true
+  target_language: "English"
+  auto_detect_source: true
+
+memory:
+  enabled: true
+  storage_type: "json"        # "json" or "chromadb"
+  persist_dir: "./chroma_db"
+  collection_name: "scrutator_memory"
+  auto_apply: false               # user approval required
+  retention: "forever"
+  embedding_model: "all-MiniLM-L6-v2"
+
+output:
+  reports_dir: "./reports"
+  default_format: "markdown"
+
+logging:
+  level: "INFO"                   # DEBUG, INFO, WARNING, ERROR
+  file: "./logs/scrutator.log"
+  structured: true

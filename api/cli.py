@@ -1,0 +1,129 @@
+"""Command-line interface for Scrutator."""
+
+import click
+import os
+import yaml
+import logging
+from datetime import datetime
+from dotenv import load_dotenv
+
+from core.research_agent import ResearchAgent
+from memory.types import FeedbackMemory
+from memory.approval import apply_memory_interactively
+
+load_dotenv()
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("scrutator.cli")
+
+def load_config() -> dict:
+    """Load configuration from settings.yaml."""
+    config_path = "./config/settings.yaml"
+    if not os.path.exists(config_path):
+        # Fallback empty config structure
+        return {
+            "model": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.7},
+            "search": {"searxng_url": "http://localhost:8888", "fallback_to_public": true},
+            "research": {"loop_limits": {"quick": 3, "balanced": 7, "deep": 15}, "confidence_threshold": 85, "min_sources": 10},
+            "memory": {"enabled": true, "storage_type": "json", "storage_path": "./memory_store.json"},
+            "output": {"reports_dir": "./reports"},
+            "translation": {"enabled": true}
+        }
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    
+    # Load country_language_map if it exists
+    cmap_path = "./config/country_language_map.yaml"
+    if os.path.exists(cmap_path):
+        with open(cmap_path, "r", encoding="utf-8") as f:
+            cmap_data = yaml.safe_load(f)
+            config["country_language_map"] = cmap_data.get("country_language_map", {})
+            
+    return config
+
+@click.command()
+@click.argument("query", required=True)
+@click.option("--regions", "-r", help="Comma-separated country codes (e.g. US,CN,DE)")
+@click.option("--languages", "-l", help="Comma-separated language codes (e.g. en,zh,de)")
+@click.option("--mode", "-m", default="balanced", type=click.Choice(["quick", "balanced", "deep"]), help="Research mode")
+@click.option("--max-loops", "-n", type=int, help="Override maximum research loops")
+@click.option("--memory", default="ask", type=click.Choice(["auto", "ask", "off"]), help="Memory application mode")
+@click.option("--feedback", is_flag=True, help="Collect user feedback after research finishes")
+@click.option("--verbose", is_flag=True, help="Show debug logs")
+def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose):
+    """Scrutator - AI-powered autonomous global research assistant."""
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    logger.info("Initializing Scrutator...")
+    config = load_config()
+    
+    # Override logging level from config if not verbose
+    if not verbose:
+        log_level_str = config.get("logging", {}).get("level", "INFO")
+        logging.getLogger().setLevel(getattr(logging, log_level_str, logging.INFO))
+
+    agent = ResearchAgent(config)
+
+    # Setup list of languages
+    lang_list = ["en"]
+    if languages:
+        lang_list = [lang.strip() for lang in languages.split(",")]
+
+    # Setup list of regions
+    region_list = []
+    if regions:
+        region_list = [reg.strip().upper() for reg in regions.split(",")]
+
+    # Set up interactive callback for memory approval
+    def memory_callback(recalled_memories):
+        # We wrap the generator to a list
+        return list(apply_memory_interactively(recalled_memories, query))
+
+    # Run the agent
+    print("=" * 60)
+    print(f"🚀 Starting research: '{query}'")
+    print(f"🌍 Languages: {lang_list} | Mode: {mode} | Memory: {memory}")
+    print("=" * 60)
+
+    try:
+        report_data = agent.run(
+            query=query,
+            languages=lang_list,
+            mode=mode,
+            max_loops=max_loops,
+            regions=region_list,
+            memory_mode=memory,
+            feedback_callback=memory_callback
+        )
+        
+        print("\n" + "=" * 60)
+        print("🏆 Research Complete!")
+        print(f"Overall Confidence: {report_data['overall_confidence']:.1f}/100")
+        print(f"Total Sources Found: {len(report_data['sources'])}")
+        print(f"Report Saved to: {report_data['report_path']}")
+        print("=" * 60)
+
+        # Collect user feedback if flag is set
+        if feedback and agent.memory:
+            user_input = input("\n💬 Enter feedback on these findings (e.g., gaps, preferences, corrections): ").strip()
+            if user_input:
+                fb_id = f"feedback_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                agent.memory.add(FeedbackMemory(
+                    id=fb_id,
+                    topic=query,
+                    content=user_input,
+                    timestamp=datetime.now()
+                ))
+                print("🧠 Feedback saved to memory for future research runs!")
+
+    except Exception as e:
+        logger.error(f"Research run failed: {e}", exc_info=True)
+        print(f"\n❌ Error executing research: {e}")
+
+if __name__ == "__main__":
+    cli()
