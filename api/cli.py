@@ -54,7 +54,8 @@ def load_config() -> dict:
 @click.option("--memory", default="ask", type=click.Choice(["auto", "ask", "off"]), help="Memory application mode")
 @click.option("--feedback", is_flag=True, help="Collect user feedback after research finishes")
 @click.option("--verbose", is_flag=True, help="Show debug logs")
-def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose):
+@click.option("--academic", is_flag=True, help="Run in academic literature review mode")
+def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, academic):
     """Scrutator - AI-powered autonomous global research assistant."""
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -86,8 +87,12 @@ def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose):
 
     # Run the agent
     print("=" * 60)
-    print(f"🚀 Starting research: '{query}'")
-    print(f"🌍 Languages: {lang_list} | Mode: {mode} | Memory: {memory}")
+    if academic:
+        print(f"🚀 Starting academic literature review: '{query}'")
+        print(f"🌍 Databases: ArXiv, PubMed, OpenAlex | Mode: {mode}")
+    else:
+        print(f"🚀 Starting research: '{query}'")
+        print(f"🌍 Languages: {lang_list} | Mode: {mode} | Memory: {memory}")
     print("=" * 60)
 
     try:
@@ -98,14 +103,25 @@ def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose):
             max_loops=max_loops,
             regions=region_list,
             memory_mode=memory,
-            feedback_callback=memory_callback
+            feedback_callback=memory_callback,
+            academic=academic
         )
         
         print("\n" + "=" * 60)
         print("🏆 Research Complete!")
-        print(f"Overall Confidence: {report_data['overall_confidence']:.1f}/100")
-        print(f"Total Sources Found: {len(report_data['sources'])}")
-        print(f"Report Saved to: {report_data['report_path']}")
+        if academic:
+            if "error" in report_data:
+                print(f"Error: {report_data['error']}")
+            else:
+                print(f"Methodology Confidence: {report_data['confidence']:.1f}%")
+                print(f"Total Papers Found: {len(report_data['papers'])}")
+                print(f"Report Saved to: {report_data['report_path']}")
+                print(f"BibTeX Saved to: {report_data['bib_path']}")
+                print(f"LaTeX Saved to: {report_data['latex_path']}")
+        else:
+            print(f"Overall Confidence: {report_data['overall_confidence']:.1f}/100")
+            print(f"Total Sources Found: {len(report_data['sources'])}")
+            print(f"Report Saved to: {report_data['report_path']}")
         print("=" * 60)
 
         # Collect user feedback if flag is set

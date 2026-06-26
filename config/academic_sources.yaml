@@ -1,0 +1,28 @@
+# Academic database configurations
+databases:
+  arxiv:
+    base_url: "http://export.arxiv.org/api/query"
+    search_param: "search_query"
+    sort_by: "submittedDate"
+    sort_order: "descending"
+    max_results: 50
+    # Query format: "ti:quantum computing OR abs:quantum computing"
+  pubmed:
+    base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+    esearch_endpoint: "esearch.fcgi"
+    efetch_endpoint: "efetch.fcgi"
+    database: "pubmed"
+    max_results: 50
+  openalex:
+    base_url: "https://api.openalex.org/works"
+    max_results: 50
+    # Query via `?search=...`
+
+# Rate limiting (requests per second / min interval in seconds)
+rate_limits:
+  arxiv: 3.0  # 3 seconds between requests
+  pubmed: 5.0
+  openalex: 2.0
+
+# Default user email (set in .env)
+user_email: "default@example.com"

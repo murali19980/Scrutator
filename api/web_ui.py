@@ -144,10 +144,10 @@ def load_config() -> dict:
 config = load_config()
 agent = ResearchAgent(config)
 
-def run_research_ui(query, mode, languages, regions, memory_mode):
+def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode):
     """Run research and return results to UI."""
     if not query:
-        return "Please enter a search query.", None, "Error: Empty query"
+        return "Please enter a search query.", None, None, None, "Error: Empty query"
     
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
     if not lang_list:
@@ -155,8 +155,7 @@ def run_research_ui(query, mode, languages, regions, memory_mode):
         
     region_list = [r.strip() for r in regions.split(",") if r.strip()]
     
-    status_msg = "🔄 Running research loops..."
-    logger.info(f"UI trigger research: {query}")
+    logger.info(f"UI trigger research: {query} (Academic: {academic_mode})")
     
     try:
         # Run agent (without interactive ask support for web UI MVP, auto applies topic memories if ask selected)
@@ -168,18 +167,28 @@ def run_research_ui(query, mode, languages, regions, memory_mode):
             languages=lang_list,
             mode=mode,
             regions=region_list,
-            memory_mode=agent_mem_mode
+            memory_mode=agent_mem_mode,
+            academic=academic_mode
         )
         
+        if "error" in report_data:
+            return f"### ❌ Research Failed\n\n{report_data['error']}", None, None, None, f"Error: {report_data['error']}"
+            
         markdown_report = report_data["markdown"]
         report_path = report_data["report_path"]
         
-        status_done = f"🟢 Complete! Confidence Score: {report_data['overall_confidence']:.1f}/100. Saved to {report_path}"
-        return markdown_report, report_path, status_done
+        if academic_mode:
+            latex_path = report_data.get("latex_path")
+            bib_path = report_data.get("bib_path")
+            status_done = f"🟢 Complete! Methodology Confidence: {report_data['confidence']:.1f}%. Saved to {report_path}"
+            return markdown_report, report_path, latex_path, bib_path, status_done
+        else:
+            status_done = f"🟢 Complete! Confidence Score: {report_data['overall_confidence']:.1f}/100. Saved to {report_path}"
+            return markdown_report, report_path, None, None, status_done
         
     except Exception as e:
         logger.error(f"UI research failed: {e}", exc_info=True)
-        return f"### ❌ Research Failed\n\nError: {e}", None, f"Error: {e}"
+        return f"### ❌ Research Failed\n\nError: {e}", None, None, None, f"Error: {e}"
 
 def list_memories():
     """Retrieve memories formatted for table."""
@@ -244,17 +253,22 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                     languages_input = gr.Textbox(label="Target Languages (Comma separated)", value="en")
                     regions_input = gr.Textbox(label="Target Regions (Comma separated)", placeholder="US, CN, DE")
                     
+                    academic_input = gr.Checkbox(label="Academic Mode (Literature Review)", value=False)
+                    
                     submit_btn = gr.Button("Start Research Agent", elem_classes="accent-btn")
                     
                 with gr.Column(scale=2, elem_classes="glass-panel"):
                     status_box = gr.Textbox(label="Status / Diagnostics", value="Ready to research", elem_classes="status-log", interactive=False)
                     report_output = gr.Markdown(value="Report will appear here after execution.")
-                    file_output = gr.File(label="Download Report")
+                    with gr.Row():
+                        file_output = gr.File(label="Download Markdown Report")
+                        latex_output = gr.File(label="Download LaTeX Report")
+                        bib_output = gr.File(label="Download BibTeX Citations")
 
             submit_btn.click(
                 fn=run_research_ui,
-                inputs=[query_input, mode_input, languages_input, regions_input, memory_input],
-                outputs=[report_output, file_output, status_box]
+                inputs=[query_input, mode_input, languages_input, regions_input, memory_input, academic_input],
+                outputs=[report_output, file_output, latex_output, bib_output, status_box]
             )
 
         # Memory Vault Tab

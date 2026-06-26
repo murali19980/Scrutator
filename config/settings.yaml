@@ -43,7 +43,7 @@ memory:
 
 output:
   reports_dir: "./reports"
-  default_format: "markdown"
+  default_format: "markdown"      # markdown, latex, bibtex
 
 logging:
   level: "INFO"                   # DEBUG, INFO, WARNING, ERROR

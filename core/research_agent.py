@@ -17,6 +17,13 @@ from core.reporter import Reporter
 from core.model_provider import ModelProvider
 from memory.manager import MemoryManager
 
+# Scrutator Academic imports
+from core.searcher_academic import AcademicSearcher
+from core.paper_scorer import PaperScorer
+from core.contradiction_detector import ContradictionDetector
+from core.reporter_academic import AcademicReporter
+from api.export_bibtex import export_bibtex
+
 logger = logging.getLogger(__name__)
 
 class ResearchAgent:
@@ -41,6 +48,11 @@ class ResearchAgent:
         if config.get("memory", {}).get("enabled", False):
             self.memory = MemoryManager(config.get("memory", {}))
 
+        self.academic_searcher = AcademicSearcher()
+        self.paper_scorer = PaperScorer(self.model_provider)
+        self.contradiction_detector = ContradictionDetector(self.model_provider)
+        self.academic_reporter = AcademicReporter()
+
         self.all_sources = []
         self.loop_history = []
         self.final_report = None
@@ -53,11 +65,15 @@ class ResearchAgent:
         max_loops: Optional[int] = None,
         regions: List[str] = None,
         memory_mode: str = "ask",  # auto, ask, off
-        feedback_callback = None
+        feedback_callback = None,
+        academic: bool = False
     ) -> Dict:
         """
         Main research entry point. Executes the iterative research loop.
         """
+        if academic:
+            return self._run_academic(query, mode, max_loops)
+            
         logger.info(f"Starting research for query: {query}")
         languages = languages or ["en"]
         
@@ -292,3 +308,132 @@ Output format:
         except Exception as e:
             logger.warning(f"Failed to generate follow-up questions: {e}")
             return ["What are the next developments?", "Who are the key players?", "What are the limitations?"]
+
+    def _run_academic(self, query: str, mode: str, max_loops: Optional[int] = None) -> Dict:
+        """Run an academic literature review."""
+        logger.info(f"Starting academic literature review for: {query}")
+        
+        loop_limit = max_loops or self.config.get("research", {}).get("loop_limits", {}).get(mode, 5)
+        # Search all configured databases
+        papers = self.academic_searcher.search_all(query, max_results=loop_limit * 5)
+        if not papers:
+            logger.warning("No academic papers found.")
+            return {"error": "No academic papers found."}
+
+        logger.info(f"Found {len(papers)} unique papers. Scoring them...")
+        # Score each paper
+        scores = []
+        for p in papers:
+            score = self.paper_scorer.score(p)
+            scores.append(score)
+
+        logger.info("Detecting contradictions...")
+        # Detect contradictions
+        contradictions = self.contradiction_detector.detect(papers)
+
+        logger.info("Synthesizing summary and key themes...")
+        # Synthesize summary and themes
+        combined = "\n\n".join([f"Title: {p['title']}\nAbstract: {p['summary'][:400]}" for p in papers[:6]])
+        summary_prompt = f"""You are an academic literature reviewer. Given the following academic research papers for the query '{query}', write:
+1. A 2-3 paragraph executive literature review summary.
+2. A list of 3-5 key themes identified (as bullet points).
+
+Papers:
+{combined}
+
+Output format:
+Summary:
+[Your executive summary paragraphs here]
+
+Key Themes:
+- Theme 1
+- Theme 2
+"""
+        try:
+            summary = self.model_provider.generate(summary_prompt, temperature=0.5)
+            summary_text = ""
+            themes = []
+            
+            # Simple parsing
+            parts = summary.split("Key Themes:")
+            summary_text = parts[0].replace("Summary:", "").strip()
+            if len(parts) > 1:
+                for line in parts[1].split("\n"):
+                    line_strip = line.strip()
+                    if line_strip.startswith("-") or line_strip.startswith("*"):
+                        themes.append(line_strip.lstrip("-* ").strip())
+        except Exception as e:
+            logger.error(f"Failed to generate academic summary: {e}")
+            summary_text = "Failed to generate summary."
+            themes = []
+
+        # Find research gaps based on the summary
+        gap_prompt = f"Given this research summary on '{query}', suggest 3 key research gaps or areas where further research is needed:\n\n{summary_text}\n\nOutput 3 bullet points:"
+        gaps = []
+        try:
+            gap_response = self.model_provider.generate(gap_prompt, temperature=0.5)
+            for line in gap_response.split("\n"):
+                line_strip = line.strip()
+                if line_strip.startswith("-") or line_strip.startswith("*") or re.match(r"^\d+\.", line_strip):
+                    gaps.append(re.sub(r"^[-*\d\.\s]+", "", line_strip).strip())
+        except Exception as e:
+            logger.error(f"Failed to generate gaps: {e}")
+
+        # Compute average methodology score as overall confidence
+        avg_methodology = sum(s.get("methodology", 50) for s in scores) / len(scores) if scores else 0.0
+
+        report_data = {
+            "query": query,
+            "papers": papers,
+            "scores": scores,
+            "contradictions": contradictions,
+            "gaps": gaps or ["Insufficient data to determine research gaps."],
+            "summary": summary_text,
+            "themes": themes,
+            "confidence": avg_methodology
+        }
+
+        # Generate reports
+        markdown_report = self.academic_reporter.generate_markdown(report_data)
+        latex_report = self.academic_reporter.generate_latex(report_data)
+        report_data["markdown"] = markdown_report
+        report_data["latex"] = latex_report
+
+        # Save files to reports_dir
+        reports_dir = self.config.get("output", {}).get("reports_dir", "./reports")
+        os.makedirs(reports_dir, exist_ok=True)
+        safe_query = re.sub(r'[^a-zA-Z0-9_\-]', '_', query)[:50]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Save markdown
+        report_path = os.path.join(reports_dir, f"report_academic_{safe_query}_{timestamp}.md")
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(markdown_report)
+        report_data["report_path"] = report_path
+        
+        # Save LaTeX
+        latex_path = os.path.join(reports_dir, f"report_academic_{safe_query}_{timestamp}.tex")
+        with open(latex_path, "w", encoding="utf-8") as f:
+            f.write(latex_report)
+        report_data["latex_path"] = latex_path
+        
+        # Export BibTeX
+        bib_path = os.path.join(reports_dir, f"references_{safe_query}_{timestamp}.bib")
+        export_bibtex(papers, bib_path)
+        report_data["bib_path"] = bib_path
+        
+        # Save to memory if enabled
+        if self.memory:
+            from memory.types import KnowledgeMemory
+            mem_content = f"Academic Literature Review on '{query}' compiled with {len(papers)} papers. Avg methodology confidence: {avg_methodology:.1f}%."
+            self.memory.add(KnowledgeMemory(
+                id=f"academic_{timestamp}",
+                topic=query,
+                content=mem_content,
+                timestamp=datetime.now(),
+                confidence=avg_methodology,
+                metadata={"report_path": report_path, "bib_path": bib_path}
+            ))
+
+        self.final_report = report_data
+        return report_data

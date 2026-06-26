@@ -1,11 +1,47 @@
-"""Web content extraction with Crawl4AI and fallback."""
-
 import logging
 import requests
 from bs4 import BeautifulSoup
 from typing import Optional, Dict
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+def is_safe_url(url: str) -> bool:
+    """Check if a URL is safe to request (prevents SSRF)."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    
+    # 1. Only allow http and https
+    if parsed.scheme not in ("http", "https"):
+        return False
+    
+    # 2. Block any URL that contains an IP address (we'll resolve domains separately)
+    #    but also block if the hostname is an IP directly.
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    
+    # 3. Resolve domain to IP(s) and check against private ranges
+    try:
+        ips = socket.getaddrinfo(hostname, None, family=socket.AF_UNSPEC)
+    except socket.gaierror:
+        return False  # unresolvable = unsafe
+    
+    for ip_info in ips:
+        ip_str = ip_info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        # Block private, loopback, link-local, multicast, and reserved
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or
+            ip.is_multicast or ip.is_reserved):
+            return False
+    return True
 
 # Try to import Crawl4AI with graceful degradation
 try:
@@ -28,6 +64,9 @@ class ContentExtractor:
 
     def extract(self, url: str) -> Optional[Dict]:
         """Extract clean content from a URL."""
+        if not is_safe_url(url):
+            logger.warning(f"Blocked unsafe URL: {url}")
+            return None
         # Primary: Crawl4AI
         if self.crawler:
             try:
