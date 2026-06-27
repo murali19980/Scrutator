@@ -2,6 +2,7 @@
 
 import httpx
 import logging
+import asyncio
 import re
 import time
 import os
@@ -371,4 +372,56 @@ class AcademicSearcher:
             if key and key not in seen:
                 seen.add(key)
                 unique.append(item)
+        return unique[:max_results]
+
+    async def search_all_async(self, query: str, max_results: int = 50, use_cache: bool = True) -> List[Dict]:
+        """Search all databases in parallel and return merged, deduplicated results."""
+        from core.cache import SearchCache
+        cache = SearchCache()
+        
+        sources = ["arxiv", "pubmed", "openalex"]
+        
+        async def search_source_task(source: str):
+            if use_cache:
+                cached = cache.get(query, source)
+                if cached is not None:
+                    logger.info(f"Cache hit for academic source '{source}'")
+                    return cached
+            
+            try:
+                if source == "arxiv":
+                    res = await asyncio.to_thread(self.search_arxiv, query, max_results)
+                elif source == "pubmed":
+                    res = await asyncio.to_thread(self.search_pubmed, query, max_results)
+                elif source == "openalex":
+                    res = await asyncio.to_thread(self.search_openalex, query, max_results)
+                else:
+                    res = []
+            except Exception as e:
+                logger.error(f"Search for source '{source}' failed: {e}")
+                res = []
+                
+            if res and use_cache:
+                cache.set(query, source, res)
+            return res
+
+        # Run tasks in parallel
+        tasks = [search_source_task(src) for src in sources]
+        results_lists = await asyncio.gather(*tasks)
+        
+        # Merge and deduplicate
+        all_results = []
+        for lst in results_lists:
+            all_results.extend(lst)
+            
+        seen = set()
+        unique = []
+        for item in all_results:
+            doi = item.get("doi")
+            title = item.get("title", "").strip().lower()
+            key = doi if doi else title
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(item)
+                
         return unique[:max_results]

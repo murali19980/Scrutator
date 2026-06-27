@@ -4,6 +4,7 @@ import gradio as gr
 import os
 import yaml
 import logging
+import asyncio
 from datetime import datetime
 
 from core.research_agent import ResearchAgent
@@ -144,7 +145,7 @@ def load_config() -> dict:
 config = load_config()
 agent = ResearchAgent(config)
 
-def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode, uploaded_pdfs=None, progress=gr.Progress()):
+async def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode, uploaded_pdfs=None, progress=gr.Progress()):
     """Run research and return results to UI."""
     if not query:
         return "Please enter a search query.", None, None, None, None, None, None, "Error: Empty query"
@@ -157,23 +158,10 @@ def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode,
     
     logger.info(f"UI trigger research: {query} (Academic: {academic_mode})")
     
-    # Live logger progress status callback
-    def progress_callback(status_msg):
-        logger.info(status_msg)
-        if "Searching" in status_msg:
-            progress(0.1, desc=status_msg)
-        elif "Checking" in status_msg:
-            progress(0.3, desc=status_msg)
-        elif "Scoring" in status_msg:
-            progress(0.5, desc=status_msg)
-        elif "Detecting" in status_msg:
-            progress(0.7, desc=status_msg)
-        elif "Synthesizing" in status_msg or "gap" in status_msg.lower():
-            progress(0.8, desc=status_msg)
-        elif "Generating" in status_msg or "Packaging" in status_msg:
-            progress(0.9, desc=status_msg)
-        else:
-            progress(0.95, desc=status_msg)
+    # Progress callback mapping ProgressUpdate to Gradio progress bar
+    def progress_callback(update):
+        logger.info(f"[{update.step}] {update.message}")
+        progress(update.progress, desc=update.message[:50])
             
     try:
         progress(0.02, desc="Initializing research loop...")
@@ -201,7 +189,7 @@ def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode,
         
         agent_mem_mode = "auto" if memory_mode == "ask" else memory_mode
         
-        report_data = agent.run(
+        report_data = await agent.run_async(
             query=query,
             languages=lang_list,
             mode=mode,
@@ -212,6 +200,9 @@ def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode,
             uploaded_papers=uploaded_papers
         )
         
+        if report_data.get("status") == "cancelled":
+            return "### ⏹️ Research Cancelled\n\nResearch was cancelled by the user.", None, None, None, None, None, None, "⏹️ Research Cancelled"
+            
         if "error" in report_data:
             return f"### ❌ Research Failed\n\n{report_data['error']}", None, None, None, None, None, None, f"Error: {report_data['error']}"
             
@@ -233,6 +224,16 @@ def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode,
     except Exception as e:
         logger.error(f"UI research failed: {e}", exc_info=True)
         return f"### ❌ Research Failed\n\nError: {e}", None, None, None, None, None, None, f"Error: {e}"
+
+def cancel_research_ui():
+    agent.cancel()
+    return "⏹️ Cancelling..."
+
+def show_cancel():
+    return gr.update(visible=False), gr.update(visible=True)
+
+def hide_cancel():
+    return gr.update(visible=True), gr.update(visible=False)
 
 def list_memories():
     """Retrieve memories formatted for table."""
@@ -300,7 +301,9 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                     academic_input = gr.Checkbox(label="Academic Mode (Literature Review)", value=False)
                     uploaded_pdfs_input = gr.File(label="Upload local PDF papers (Optional)", file_count="multiple", file_types=[".pdf"])
                     
-                    submit_btn = gr.Button("Start Research Agent", elem_classes="accent-btn")
+                    with gr.Row():
+                        submit_btn = gr.Button("Start Research Agent", elem_classes="accent-btn")
+                        cancel_btn = gr.Button("Cancel Research", elem_classes="sec-btn", visible=False)
                     
                 with gr.Column(scale=2, elem_classes="glass-panel"):
                     status_box = gr.Textbox(label="Status / Diagnostics", value="Ready to research", elem_classes="status-log", interactive=False)
@@ -313,11 +316,25 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                         ris_output = gr.File(label="Download RIS References")
                         csv_output = gr.File(label="Download CSV Table")
                         zip_output = gr.File(label="Download Complete Zip Bundle")
-
+ 
             submit_btn.click(
+                fn=show_cancel,
+                inputs=None,
+                outputs=[submit_btn, cancel_btn]
+            ).then(
                 fn=run_research_ui,
                 inputs=[query_input, mode_input, languages_input, regions_input, memory_input, academic_input, uploaded_pdfs_input],
                 outputs=[report_output, file_output, latex_output, bib_output, ris_output, csv_output, zip_output, status_box]
+            ).then(
+                fn=hide_cancel,
+                inputs=None,
+                outputs=[submit_btn, cancel_btn]
+            )
+ 
+            cancel_btn.click(
+                fn=cancel_research_ui,
+                inputs=[],
+                outputs=[status_box]
             )
 
         # Memory Vault Tab
@@ -365,6 +382,12 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
         # System Diagnostics Tab
         with gr.Tab("⚙️ Settings & Settings"):
             with gr.Column(elem_classes="glass-panel"):
+                gr.Markdown("### 🗄️ Cache Settings")
+                with gr.Row():
+                    cache_status = gr.Textbox(label="Cache Status", value="✅ Cache active (7-day TTL)", interactive=False)
+                    clear_cache_btn = gr.Button("Clear Search Cache", elem_classes="sec-btn")
+                
+                gr.Markdown("---")
                 gr.Markdown("### 🎛️ Configuration settings")
                 settings_yaml = gr.Code(
                     value=yaml.dump(config, default_flow_style=False),
@@ -372,6 +395,18 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                     label="settings.yaml",
                     interactive=False
                 )
+
+            def clear_cache():
+                from core.cache import SearchCache
+                cache = SearchCache()
+                cache.clear_all()
+                return "🗑️ Cache cleared"
+                
+            clear_cache_btn.click(
+                fn=clear_cache,
+                inputs=[],
+                outputs=[cache_status]
+            )
 
 # Auth configuration
 UI_USERNAME = os.getenv("SCRUTATOR_WEB_UI_USERNAME")

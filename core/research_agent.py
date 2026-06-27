@@ -3,9 +3,12 @@
 import logging
 import os
 import re
+import asyncio
+import anyio
 from typing import List, Dict, Optional, Set
 from datetime import datetime
 from tqdm import tqdm
+from core.feedback import ProgressTracker, ProgressUpdate
 
 from core.searcher import SearXNGClient
 from core.scraper import ContentExtractor
@@ -72,6 +75,9 @@ class ResearchAgent:
         self.all_sources = []
         self.loop_history = []
         self.final_report = None
+        self._cancelled = False
+        self._cancel_scope = None
+        self.progress_tracker = None
 
     def run(
         self,
@@ -326,7 +332,7 @@ Output format:
             logger.warning(f"Failed to generate follow-up questions: {e}")
             return ["What are the next developments?", "Who are the key players?", "What are the limitations?"]
 
-    def _run_academic(self, query: str, mode: str, max_loops: Optional[int] = None, feedback_callback = None) -> Dict:
+    def _run_academic(self, query: str, mode: str, max_loops: Optional[int] = None, feedback_callback = None, uploaded_papers: List[Dict] = None) -> Dict:
         """Run an academic literature review."""
         logger.info(f"Starting academic literature review for: {query}")
         
@@ -336,6 +342,8 @@ Output format:
         loop_limit = max_loops or self.config.get("research", {}).get("loop_limits", {}).get(mode, 5)
         # Search all configured databases
         papers = self.academic_searcher.search_all(query, max_results=loop_limit * 5)
+        if uploaded_papers:
+            papers = uploaded_papers + papers
         if not papers:
             logger.warning("No academic papers found.")
             return {"error": "No academic papers found."}
@@ -575,8 +583,366 @@ Unexplored Research Gaps:
                 metadata={"report_path": report_path, "bib_path": bib_path, "zip_path": zip_path}
             ))
 
+        self.final_report = report_data
+        return report_data
+
+    async def run_async(
+        self,
+        query: str,
+        languages: List[str] = None,
+        mode: str = "balanced",
+        max_loops: Optional[int] = None,
+        regions: List[str] = None,
+        memory_mode: str = "ask",
+        feedback_callback = None,
+        academic: bool = False,
+        uploaded_papers: List[Dict] = None
+    ) -> Dict:
+        """Asynchronous entry point supporting progress callbacks and cancellation."""
+        self.progress_tracker = ProgressTracker()
         if feedback_callback:
-            feedback_callback(f"Review complete! Saved review to reports folder.")
+            self.progress_tracker.add_callback(feedback_callback)
+        self._cancelled = False
+        
+        try:
+            async with anyio.CancelScope() as scope:
+                self._cancel_scope = scope
+                await self.progress_tracker.update("initializing", "Starting research loop...", 0.0)
+                
+                if academic:
+                    result = await self._run_academic_async(query, mode, max_loops, uploaded_papers)
+                else:
+                    result = await self._run_regular_async(
+                        query=query,
+                        languages=languages,
+                        mode=mode,
+                        max_loops=max_loops,
+                        regions=regions,
+                        memory_mode=memory_mode
+                    )
+                
+                if self.is_cancelled():
+                    return {"status": "cancelled", "message": "Research cancelled by user."}
+                
+                await self.progress_tracker.update("completed", "Research completed successfully!", 1.0)
+                self.progress_tracker.complete()
+                return result
+        except anyio.get_cancelled_exc_class():
+            await self.progress_tracker.update("cancelled", "Research was cancelled.", 1.0)
+            return {"status": "cancelled", "message": "Research cancelled by user."}
+        finally:
+            self._cancel_scope = None
+            self.progress_tracker = None
+
+    def cancel(self) -> None:
+        """Cancel the currently running research task."""
+        self._cancelled = True
+        if self._cancel_scope:
+            self._cancel_scope.cancel()
+        if self.progress_tracker:
+            self.progress_tracker.cancel()
+        logger.info("ResearchAgent cancel requested.")
+
+    def is_cancelled(self) -> bool:
+        """Check if the task has been cancelled."""
+        return self._cancelled
+
+    async def _run_regular_async(
+        self,
+        query: str,
+        languages: List[str] = None,
+        mode: str = "balanced",
+        max_loops: Optional[int] = None,
+        regions: List[str] = None,
+        memory_mode: str = "ask",
+    ) -> Dict:
+        """Run standard research loop in a separate worker thread."""
+        def run_sync_wrapper():
+            return self.run(
+                query=query,
+                languages=languages,
+                mode=mode,
+                max_loops=max_loops,
+                regions=regions,
+                memory_mode=memory_mode,
+                feedback_callback=None,
+                academic=False
+            )
+        return await asyncio.to_thread(run_sync_wrapper)
+
+    async def _run_academic_async(
+        self,
+        query: str,
+        mode: str,
+        max_loops: Optional[int] = None,
+        uploaded_papers: List[Dict] = None
+    ) -> Dict:
+        """Run async academic literature review loop with step updates and cancellation boundaries."""
+        logger.info(f"Starting academic literature review (async) for: {query}")
+        tracker = self.progress_tracker or ProgressTracker()
+        
+        await tracker.update("searching", "Searching academic databases (ArXiv, PubMed, OpenAlex)...", 0.1)
+        
+        loop_limit = max_loops or self.config.get("research", {}).get("loop_limits", {}).get(mode, 5)
+        
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+            
+        papers = await self.academic_searcher.search_all_async(query, max_results=loop_limit * 5)
+        
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+            
+        if uploaded_papers:
+            papers = uploaded_papers + papers
+            
+        if not papers:
+            logger.warning("No academic papers found.")
+            await tracker.update("error", "No academic papers found.", 1.0)
+            return {"error": "No academic papers found."}
+
+        # Unpaywall PDF full text extraction (if enabled)
+        fetch_full_text = self.config.get("academic", {}).get("fetch_full_text", True)
+        if fetch_full_text:
+            await tracker.update("extracting", f"Found {len(papers)} papers. Checking for Open-Access PDFs...", 0.2)
+            from core.scraper import download_and_extract_pdf, get_safe_session, is_safe_url
+            session = get_safe_session()
+            for idx, p in enumerate(papers):
+                if self.is_cancelled():
+                    return {"status": "cancelled"}
+                progress_val = 0.2 + (0.1 * (idx + 1) / len(papers))
+                await tracker.update("extracting", f"Checking OA PDF for: {p['title'][:40]}...", progress_val)
+                
+                if p.get("full_text"):
+                    continue
+                    
+                doi = p.get("doi")
+                if doi:
+                    try:
+                        email = os.getenv("USER_EMAIL") or self.config.get("user_email", "default@example.com")
+                        unpaywall_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
+                        if is_safe_url(unpaywall_url):
+                            resp = await asyncio.to_thread(session.get, unpaywall_url, timeout=10)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                if data.get("is_oa") and data.get("best_oa_location"):
+                                    pdf_url = data["best_oa_location"].get("url_for_pdf")
+                                    if pdf_url:
+                                        logger.info(f"Downloading Open-Access PDF for: {p['title']}...")
+                                        full_text = await asyncio.to_thread(download_and_extract_pdf, pdf_url)
+                                        if full_text:
+                                            p["full_text"] = full_text
+                                            p["oa_pdf_url"] = pdf_url
+                    except Exception as e:
+                        logger.warning(f"Unpaywall OA check failed for DOI {doi}: {e}")
+
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+
+        await tracker.update("scoring", "Scoring papers along three dimensions...", 0.4)
+        
+        scores = []
+        for idx, p in enumerate(papers):
+            if self.is_cancelled():
+                return {"status": "cancelled"}
+            progress_val = 0.4 + (0.2 * (idx + 1) / len(papers))
+            await tracker.update("scoring", f"Scoring paper: {p['title'][:40]}...", progress_val)
+            
+            score = await asyncio.to_thread(self.paper_scorer.score, p)
+            scores.append(score)
+
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+
+        await tracker.update("analyzing", "Detecting contradictions and mapping claims...", 0.6)
+        contradictions = await asyncio.to_thread(self.contradiction_detector.detect, papers)
+
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+
+        await tracker.update("synthesizing", "Synthesizing literature review summary...", 0.7)
+        combined = "\n\n".join([f"Title: {p['title']}\nAbstract: {p['summary'][:400]}" for p in papers[:6]])
+        summary_prompt = f"""You are an academic literature reviewer. Given the following academic research papers for the query '{query}', write:
+1. A 2-3 paragraph executive literature review summary.
+2. A list of 3-5 key themes identified (as bullet points).
+
+Papers:
+{combined}
+
+Output format:
+Summary:
+[Your executive summary paragraphs here]
+
+Key Themes:
+- Theme 1
+- Theme 2
+"""
+        try:
+            summary = await asyncio.to_thread(self.model_provider.generate, summary_prompt, temperature=0.5)
+            summary_text = ""
+            themes = []
+            
+            parts = summary.split("Key Themes:")
+            summary_text = parts[0].replace("Summary:", "").strip()
+            if len(parts) > 1:
+                for line in parts[1].split("\n"):
+                    line_strip = line.strip()
+                    if line_strip.startswith("-") or line_strip.startswith("*"):
+                        themes.append(line_strip.lstrip("-* ").strip())
+        except Exception as e:
+            logger.error(f"Failed to generate academic summary: {e}")
+            summary_text = "Failed to generate summary."
+            themes = []
+
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+
+        await tracker.update("gaps", "Performing systematic research gap analysis...", 0.8)
+        gap_prompt = f"""You are an expert research planner. Based on the following literature review summary on '{query}', perform a systematic research gap analysis.
+        
+Identify:
+1. WHAT IS ESTABLISHED: Consensus or well-proven concepts across the papers.
+2. WHAT IS CONTESTED: Disagreements, conflicting findings, or inconsistencies between the studies.
+3. WHAT IS UNEXPLORED: Empty spaces, future work directions, or missing variables that have not been investigated.
+
+Summary:
+{summary_text}
+
+Output format:
+Established Consensus:
+- [Consensus item 1]
+- [Consensus item 2]
+
+Contested/Conflicting Areas:
+- [Conflict item 1]
+- [Conflict item 2]
+
+Unexplored Research Gaps:
+- [Gap item 1]
+- [Gap item 2]
+"""
+        established = []
+        contested = []
+        gaps = []
+        try:
+            gap_response = await asyncio.to_thread(self.model_provider.generate, gap_prompt, temperature=0.5)
+            current_section = None
+            for line in gap_response.split("\n"):
+                line_strip = line.strip()
+                if not line_strip:
+                    continue
+                if "Established Consensus:" in line_strip:
+                    current_section = "established"
+                    continue
+                elif "Contested/Conflicting Areas:" in line_strip:
+                    current_section = "contested"
+                    continue
+                elif "Unexplored Research Gaps:" in line_strip:
+                    current_section = "gaps"
+                    continue
+                
+                if line_strip.startswith("-") or line_strip.startswith("*") or re.match(r"^\d+\.", line_strip):
+                    cleaned = re.sub(r"^[-*\d\.\s]+", "", line_strip).strip()
+                    if cleaned:
+                        if current_section == "established":
+                            established.append(cleaned)
+                        elif current_section == "contested":
+                            contested.append(cleaned)
+                        elif current_section == "gaps":
+                            gaps.append(cleaned)
+        except Exception as e:
+            logger.error(f"Failed to generate gaps: {e}")
+
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+
+        avg_methodology = sum(s.get("methodology", 50) for s in scores) / len(scores) if scores else 0.0
+
+        report_data = {
+            "query": query,
+            "papers": papers,
+            "scores": scores,
+            "contradictions": contradictions,
+            "gaps": gaps or ["Insufficient data to determine research gaps."],
+            "established": established or ["No clear consensus documented."],
+            "contested": contested or ["No explicit contradictions/conflicts highlighted."],
+            "summary": summary_text,
+            "themes": themes,
+            "confidence": avg_methodology
+        }
+
+        await tracker.update("exporting", "Generating reports and exporting citation formats...", 0.9)
+        markdown_report = self.academic_reporter.generate_markdown(report_data)
+        latex_report = self.academic_reporter.generate_latex(report_data)
+        report_data["markdown"] = markdown_report
+        report_data["latex"] = latex_report
+
+        reports_dir = self.config.get("output", {}).get("reports_dir", "./reports")
+        os.makedirs(reports_dir, exist_ok=True)
+        safe_query = re.sub(r'[^a-zA-Z0-9_\-]', '_', query)[:50]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        report_path = os.path.join(reports_dir, f"report_academic_{safe_query}_{timestamp}.md")
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(markdown_report)
+        report_data["report_path"] = report_path
+        
+        latex_path = os.path.join(reports_dir, f"report_academic_{safe_query}_{timestamp}.tex")
+        with open(latex_path, "w", encoding="utf-8") as f:
+            f.write(latex_report)
+        report_data["latex_path"] = latex_path
+        
+        bib_path = os.path.join(reports_dir, f"references_{safe_query}_{timestamp}.bib")
+        await asyncio.to_thread(export_bibtex, papers, bib_path)
+        report_data["bib_path"] = bib_path
+        
+        from api.export_ris import export_ris
+        ris_path = os.path.join(reports_dir, f"references_{safe_query}_{timestamp}.ris")
+        await asyncio.to_thread(export_ris, papers, ris_path)
+        report_data["ris_path"] = ris_path
+        
+        from api.export_csv import export_csv
+        csv_path = os.path.join(reports_dir, f"references_{safe_query}_{timestamp}.csv")
+        await asyncio.to_thread(export_csv, papers, scores, csv_path)
+        report_data["csv_path"] = csv_path
+        
+        from api.export_obsidian import export_obsidian
+        obsidian_dir = os.path.join(reports_dir, f"obsidian_{safe_query}_{timestamp}")
+        await asyncio.to_thread(export_obsidian, papers, scores, report_data, obsidian_dir)
+        report_data["obsidian_dir"] = obsidian_dir
+
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+
+        await tracker.update("packaging", "Packaging workspace bundle...", 0.95)
+        from api.export_packager import package_review
+        zip_path = os.path.join(reports_dir, f"review_{safe_query}_{timestamp}.zip")
+        await asyncio.to_thread(
+            package_review,
+            report_path=report_path,
+            latex_path=latex_path,
+            bib_path=bib_path,
+            ris_path=ris_path,
+            csv_path=csv_path,
+            obsidian_dir=obsidian_dir,
+            zip_path=zip_path
+        )
+        report_data["zip_path"] = zip_path
+        
+        if self.memory:
+            from memory.types import KnowledgeMemory
+            mem_content = f"Academic Literature Review on '{query}' compiled with {len(papers)} papers. Avg methodology confidence: {avg_methodology:.1f}%."
+            await asyncio.to_thread(
+                self.memory.add,
+                KnowledgeMemory(
+                    id=f"academic_{timestamp}",
+                    topic=query,
+                    content=mem_content,
+                    timestamp=datetime.now(),
+                    confidence=avg_methodology,
+                    metadata={"report_path": report_path, "bib_path": bib_path, "zip_path": zip_path}
+                )
+            )
 
         self.final_report = report_data
         return report_data

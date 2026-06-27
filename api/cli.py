@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from core.research_agent import ResearchAgent
 from memory.types import FeedbackMemory
 from memory.approval import apply_memory_interactively
+from tqdm import tqdm
 
 load_dotenv()
 
@@ -55,9 +56,10 @@ def load_config() -> dict:
 @click.option("--feedback", is_flag=True, help="Collect user feedback after research finishes")
 @click.option("--verbose", is_flag=True, help="Show debug logs")
 @click.option("--academic", is_flag=True, help="Run in academic literature review mode")
+@click.option("--no-progress", is_flag=True, help="Disable the interactive progress bar")
 @click.option("--set-key", nargs=2, metavar="<provider> <key_value>", help="Save an API key securely (e.g. openrouter sk-...)")
 @click.option("--delete-key", metavar="<provider>", help="Delete a stored API key")
-def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, academic, set_key, delete_key):
+def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, academic, no_progress, set_key, delete_key):
     """Scrutator - AI-powered autonomous global research assistant."""
     if set_key:
         provider, key_val = set_key
@@ -118,17 +120,30 @@ def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, a
         print(f"🌍 Languages: {lang_list} | Mode: {mode} | Memory: {memory}")
     print("=" * 60)
 
+    pbar = None
+    if no_progress:
+        progress_cb = None
+    else:
+        pbar = tqdm(total=100, desc="Starting research...", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}%")
+        def progress_cb(update):
+            pbar.n = int(update.progress * 100)
+            pbar.set_description(update.message[:40])
+            pbar.refresh()
+
     try:
-        report_data = agent.run(
+        import asyncio
+        report_data = asyncio.run(agent.run_async(
             query=query,
             languages=lang_list,
             mode=mode,
             max_loops=max_loops,
             regions=region_list,
             memory_mode=memory,
-            feedback_callback=memory_callback,
+            feedback_callback=progress_cb,
             academic=academic
-        )
+        ))
+        if pbar:
+            pbar.close()
         
         print("\n" + "=" * 60)
         print("🏆 Research Complete!")
@@ -160,7 +175,16 @@ def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, a
                 ))
                 print("🧠 Feedback saved to memory for future research runs!")
 
+    except KeyboardInterrupt:
+        if pbar:
+            pbar.close()
+        click.echo("\n⏹️ Research cancelled by user.")
+        agent.cancel()
+        import sys
+        sys.exit(0)
     except Exception as e:
+        if pbar:
+            pbar.close()
         logger.error(f"Research run failed: {e}", exc_info=True)
         print(f"\n❌ Error executing research: {e}")
 

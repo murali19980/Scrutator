@@ -2,7 +2,13 @@
 
 import os
 import yaml
+import logging
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("scrutator.api")
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Dict, Optional
@@ -51,6 +57,14 @@ app = FastAPI(
     title="Scrutator Research API",
     description="REST endpoints for controlling Scrutator research agent and memory system.",
     version="0.1.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Request Models
