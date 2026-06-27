@@ -26,6 +26,7 @@ from core.paper_scorer import PaperScorer
 from core.contradiction_detector import ContradictionDetector
 from core.reporter_academic import AcademicReporter
 from api.export_bibtex import export_bibtex
+from core.citation_network import CitationNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -773,6 +774,21 @@ Unexplored Research Gaps:
         if self.is_cancelled():
             return {"status": "cancelled"}
 
+        await tracker.update("citation", "Analyzing citation network...", 0.55)
+        citation_net = CitationNetwork()
+        await citation_net.build_graph(papers)
+        citation_contradictions = citation_net.get_contradictions()
+        network_stats = citation_net.get_citation_network_stats()
+
+        if hasattr(self, 'contradiction_detector'):
+            try:
+                self.contradiction_detector.integrate_citation_network(citation_net)
+            except Exception as e:
+                logger.error(f"Citation network integration error: {e}")
+
+        if self.is_cancelled():
+            return {"status": "cancelled"}
+
         await tracker.update("analyzing", "Detecting contradictions and mapping claims...", 0.6)
         contradictions = await asyncio.to_thread(self.contradiction_detector.detect, papers)
 
@@ -887,7 +903,9 @@ Unexplored Research Gaps:
             "contested": contested or ["No explicit contradictions/conflicts highlighted."],
             "summary": summary_text,
             "themes": themes,
-            "confidence": avg_methodology
+            "confidence": avg_methodology,
+            "network_stats": network_stats if 'network_stats' in locals() else None,
+            "citation_graph": citation_net if 'citation_net' in locals() else None
         }
 
         await tracker.update("exporting", "Generating reports and exporting citation formats...", 0.9)

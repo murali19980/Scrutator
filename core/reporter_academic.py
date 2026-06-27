@@ -171,6 +171,19 @@ class AcademicReporter:
                 md += f"- {item}\n"
         else:
             md += "- No clear gaps reported.\n"
+        # Citation Network Section
+        if report_data.get("network_stats"):
+            stats = report_data["network_stats"]
+            if stats.get("total_papers", 0) > 0:
+                md += f"""
+## Citation Network Analysis
+
+- **Papers Analyzed:** {stats['total_papers']}
+- **Total Citations:** {stats['total_citations']}
+- **Average Citations per Paper:** {stats['avg_citations']}
+- **Contradictions Found via Citation Patterns:** {stats['contradictions_found']}
+- **Most Influential Papers:** {', '.join(stats['central_papers']) if stats['central_papers'] else 'None'}
+"""
 
         md += "\n## Paper Analysis\n"
         for i, paper in enumerate(papers):

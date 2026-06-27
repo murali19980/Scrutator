@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 class ContradictionDetector:
     def __init__(self, model_provider: ModelProvider):
         self.llm = model_provider
+        self._contradictions = []
 
     def detect(self, papers: List[Dict]) -> List[Dict]:
         """Group findings and detect contradictions using abstract and full-text (if available)."""
@@ -59,10 +60,46 @@ If no contradictions exist, output: "No contradictions detected."
                 system_prompt="You are a meticulous, objective researcher who excels at mapping contrasting claims across academic papers."
             )
             contradictions = self._parse(response)
-            return contradictions
+            
+            # Merge LLM and citation network contradictions
+            all_contradictions = []
+            if hasattr(self, '_contradictions') and self._contradictions:
+                all_contradictions.extend(self._contradictions)
+            all_contradictions.extend(contradictions)
+            
+            # Deduplicate contradictions by finding keys
+            seen = set()
+            unique = []
+            for c in all_contradictions:
+                key = (c.get('finding_a', '').strip().lower(), c.get('finding_b', '').strip().lower())
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(c)
+            return unique
         except Exception as e:
             logger.error(f"Contradiction detection failed: {e}")
-            return []
+            return getattr(self, '_contradictions', [])
+
+    def integrate_citation_network(self, citation_network: 'CitationNetwork'):
+        """Integrate contradictions from citation network with LLM detection."""
+        if not hasattr(self, '_contradictions'):
+            self._contradictions = []
+        
+        network_contradictions = citation_network.get_contradictions()
+        for c in network_contradictions:
+            title_a = c['paper_a']['title']
+            title_b = c['paper_b']['title']
+            authors_a = c['paper_a']['authors'][0] if c['paper_a']['authors'] else 'Unknown'
+            authors_b = c['paper_b']['authors'][0] if c['paper_b']['authors'] else 'Unknown'
+            
+            self._contradictions.append({
+                "finding_a": f"{title_a} ({authors_a})",
+                "finding_b": f"{title_b} ({authors_b})",
+                "conflict": f"Both papers cite '{c['common_reference']}' but may disagree in their interpretation.",
+                "confidence": f"{int(c['confidence'] * 100)}%",
+                "source": "citation_network"
+            })
+        logger.info(f"Integrated {len(network_contradictions)} citation network contradictions.")
 
     def _parse(self, response: str) -> List[Dict]:
         if "No contradictions detected" in response:
