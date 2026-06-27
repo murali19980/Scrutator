@@ -22,13 +22,18 @@ class PaperScorer:
         abstract = paper.get("summary", "")
         authors = ", ".join(paper.get("authors", [])[:3])
         journal = paper.get("journal", "")
+        full_text = paper.get("full_text", "")
+
+        text_context = abstract
+        if full_text:
+            text_context += "\n[Full Text Excerpt (Introduction, Methods, early Results)]:\n" + full_text[:8000]
 
         prompt = f"""You are an academic research reviewer. Score the following paper on three dimensions from 0-100. Be strict and justify each score.
 
 Paper: {title}
 Authors: {authors}
 Journal: {journal}
-Abstract: {abstract}
+Content (Abstract or Full-Text Excerpt): {text_context}
 
 Output format:
 Methodology: [score] - [justification]

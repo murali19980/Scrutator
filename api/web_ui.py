@@ -235,6 +235,20 @@ def show_cancel():
 def hide_cancel():
     return gr.update(visible=True), gr.update(visible=False)
 
+def get_cache_stats() -> str:
+    """Get cache statistics."""
+    from core.cache import SearchCache
+    cache = SearchCache()
+    import sqlite3
+    try:
+        conn = sqlite3.connect(cache.db_path)
+        cur = conn.execute("SELECT COUNT(*) FROM search_cache")
+        count = cur.fetchone()[0]
+        conn.close()
+        return f"✅ Cache active (7-day TTL) | Total Cached Queries: {count}"
+    except Exception:
+        return "✅ Cache active (7-day TTL) | Total Cached Queries: 0"
+
 def list_memories():
     """Retrieve memories formatted for table."""
     if not agent.memory:
@@ -384,7 +398,8 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
             with gr.Column(elem_classes="glass-panel"):
                 gr.Markdown("### 🗄️ Cache Settings")
                 with gr.Row():
-                    cache_status = gr.Textbox(label="Cache Status", value="✅ Cache active (7-day TTL)", interactive=False)
+                    cache_status = gr.Textbox(label="Cache Status", value=get_cache_stats(), interactive=False)
+                    refresh_cache_btn = gr.Button("Refresh Stats", elem_classes="sec-btn")
                     clear_cache_btn = gr.Button("Clear Search Cache", elem_classes="sec-btn")
                 
                 gr.Markdown("---")
@@ -400,10 +415,19 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                 from core.cache import SearchCache
                 cache = SearchCache()
                 cache.clear_all()
-                return "🗑️ Cache cleared"
+                return get_cache_stats()
+                
+            def refresh_cache():
+                return get_cache_stats()
                 
             clear_cache_btn.click(
                 fn=clear_cache,
+                inputs=[],
+                outputs=[cache_status]
+            )
+
+            refresh_cache_btn.click(
+                fn=refresh_cache,
                 inputs=[],
                 outputs=[cache_status]
             )

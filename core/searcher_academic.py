@@ -396,14 +396,14 @@ class AcademicSearcher:
                 elif source == "openalex":
                     res = await asyncio.to_thread(self.search_openalex, query, max_results)
                 else:
-                    res = []
+                    res = None
             except Exception as e:
                 logger.error(f"Search for source '{source}' failed: {e}")
-                res = []
+                res = None
                 
-            if res and use_cache:
+            if res is not None and use_cache:
                 cache.set(query, source, res)
-            return res
+            return res or []
 
         # Run tasks in parallel
         tasks = [search_source_task(src) for src in sources]

@@ -728,13 +728,32 @@ Unexplored Research Gaps:
                                 if data.get("is_oa") and data.get("best_oa_location"):
                                     pdf_url = data["best_oa_location"].get("url_for_pdf")
                                     if pdf_url:
-                                        logger.info(f"Downloading Open-Access PDF for: {p['title']}...")
+                                        logger.info(f"Downloading Open-Access PDF (Unpaywall) for: {p['title']}...")
                                         full_text = await asyncio.to_thread(download_and_extract_pdf, pdf_url)
                                         if full_text:
                                             p["full_text"] = full_text
                                             p["oa_pdf_url"] = pdf_url
+                        
+                        # Fallback to CORE API
+                        if not p.get("full_text"):
+                            from core.key_manager import KeyManager
+                            core_key = KeyManager.get_key("core")
+                            if core_key:
+                                core_url = f"https://api.core.ac.uk/v3/works/doi/{doi}"
+                                if is_safe_url(core_url):
+                                    headers = {"Authorization": f"Bearer {core_key}"}
+                                    core_resp = await asyncio.to_thread(session.get, core_url, headers=headers, timeout=10)
+                                    if core_resp.status_code == 200:
+                                        core_data = core_resp.json()
+                                        download_url = core_data.get("downloadUrl")
+                                        if download_url and is_safe_url(download_url):
+                                            logger.info(f"Downloading Open-Access PDF (CORE) for: {p['title']}...")
+                                            full_text = await asyncio.to_thread(download_and_extract_pdf, download_url)
+                                            if full_text:
+                                                p["full_text"] = full_text
+                                                p["oa_pdf_url"] = download_url
                     except Exception as e:
-                        logger.warning(f"Unpaywall OA check failed for DOI {doi}: {e}")
+                        logger.warning(f"Full-text extraction check failed for DOI {doi}: {e}")
 
         if self.is_cancelled():
             return {"status": "cancelled"}
