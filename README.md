@@ -51,6 +51,13 @@ Scrutator Academic is a local-first, AI-powered research assistant focused exclu
    python test_environment.py
    ```
 
+### 🐳 Docker Deployment
+Alternatively, you can run Scrutator Academic in containers:
+```bash
+docker-compose up -d
+```
+Access the Gradio Web UI at `http://localhost:7860` and the REST API at `http://localhost:8000`.
+
 ---
 
 ## 🚀 Usage

@@ -40,6 +40,7 @@ reports/
 !CONTRIBUTING.md
 !SECURITY.md
 !CHANGELOG.md
+!DEPLOYMENT.md
 
 # Memory storage
 memory_store.json
