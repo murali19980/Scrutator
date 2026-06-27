@@ -49,7 +49,23 @@ class ResearchAgent:
             self.memory = MemoryManager(config.get("memory", {}))
 
         self.academic_searcher = AcademicSearcher()
-        self.paper_scorer = PaperScorer(self.model_provider)
+        
+        # Check if a separate scorer model is configured to mitigate self-evaluation bias
+        scorer_provider = config.get("academic", {}).get("scorer_provider")
+        scorer_model = config.get("academic", {}).get("scorer_model")
+        if scorer_provider and scorer_model:
+            scorer_llm = ModelProvider(
+                provider=scorer_provider,
+                model=scorer_model,
+                temperature=config.get("model", {}).get("temperature", 0.7),
+                max_tokens=config.get("model", {}).get("max_tokens", 4096)
+            )
+            logger.info(f"Initialized separate LLM provider for paper scoring: {scorer_provider}/{scorer_model}")
+        else:
+            scorer_llm = self.model_provider
+
+        ensemble_runs = config.get("academic", {}).get("ensemble_runs", 1)
+        self.paper_scorer = PaperScorer(scorer_llm, ensemble_runs=ensemble_runs)
         self.contradiction_detector = ContradictionDetector(self.model_provider)
         self.academic_reporter = AcademicReporter()
 
@@ -66,13 +82,14 @@ class ResearchAgent:
         regions: List[str] = None,
         memory_mode: str = "ask",  # auto, ask, off
         feedback_callback = None,
-        academic: bool = False
+        academic: bool = False,
+        uploaded_papers: List[Dict] = None
     ) -> Dict:
         """
         Main research entry point. Executes the iterative research loop.
         """
         if academic:
-            return self._run_academic(query, mode, max_loops)
+            return self._run_academic(query, mode, max_loops, feedback_callback, uploaded_papers)
             
         logger.info(f"Starting research for query: {query}")
         languages = languages or ["en"]
@@ -309,10 +326,13 @@ Output format:
             logger.warning(f"Failed to generate follow-up questions: {e}")
             return ["What are the next developments?", "Who are the key players?", "What are the limitations?"]
 
-    def _run_academic(self, query: str, mode: str, max_loops: Optional[int] = None) -> Dict:
+    def _run_academic(self, query: str, mode: str, max_loops: Optional[int] = None, feedback_callback = None) -> Dict:
         """Run an academic literature review."""
         logger.info(f"Starting academic literature review for: {query}")
         
+        if feedback_callback:
+            feedback_callback("Searching academic databases (ArXiv, PubMed, OpenAlex)...")
+            
         loop_limit = max_loops or self.config.get("research", {}).get("loop_limits", {}).get(mode, 5)
         # Search all configured databases
         papers = self.academic_searcher.search_all(query, max_results=loop_limit * 5)
@@ -320,18 +340,52 @@ Output format:
             logger.warning("No academic papers found.")
             return {"error": "No academic papers found."}
 
-        logger.info(f"Found {len(papers)} unique papers. Scoring them...")
+        # Unpaywall PDF full text extraction (if enabled)
+        fetch_full_text = self.config.get("academic", {}).get("fetch_full_text", True)
+        if fetch_full_text:
+            if feedback_callback:
+                feedback_callback(f"Found {len(papers)} unique papers. Checking for Open-Access PDFs...")
+            from core.scraper import download_and_extract_pdf, get_safe_session, is_safe_url
+            session = get_safe_session()
+            for p in papers:
+                doi = p.get("doi")
+                if doi:
+                    try:
+                        email = self.user_email
+                        unpaywall_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
+                        if is_safe_url(unpaywall_url):
+                            resp = session.get(unpaywall_url, timeout=10)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                if data.get("is_oa") and data.get("best_oa_location"):
+                                    pdf_url = data["best_oa_location"].get("url_for_pdf")
+                                    if pdf_url:
+                                        logger.info(f"Downloading Open-Access PDF for: {p['title']}...")
+                                        full_text = download_and_extract_pdf(pdf_url)
+                                        if full_text:
+                                            p["full_text"] = full_text
+                                            p["oa_pdf_url"] = pdf_url
+                    except Exception as e:
+                        logger.warning(f"Unpaywall OA check failed for DOI {doi}: {e}")
+
+        if feedback_callback:
+            feedback_callback("Scoring papers along three dimensions (Methodology, Results, Novelty)...")
+            
         # Score each paper
         scores = []
         for p in papers:
             score = self.paper_scorer.score(p)
             scores.append(score)
 
-        logger.info("Detecting contradictions...")
+        if feedback_callback:
+            feedback_callback("Detecting contradictions and mapping claims...")
+            
         # Detect contradictions
         contradictions = self.contradiction_detector.detect(papers)
 
-        logger.info("Synthesizing summary and key themes...")
+        if feedback_callback:
+            feedback_callback("Synthesizing literature review summary and key themes...")
+            
         # Synthesize summary and themes
         combined = "\n\n".join([f"Title: {p['title']}\nAbstract: {p['summary'][:400]}" for p in papers[:6]])
         summary_prompt = f"""You are an academic literature reviewer. Given the following academic research papers for the query '{query}', write:
@@ -354,7 +408,6 @@ Key Themes:
             summary_text = ""
             themes = []
             
-            # Simple parsing
             parts = summary.split("Key Themes:")
             summary_text = parts[0].replace("Summary:", "").strip()
             if len(parts) > 1:
@@ -367,15 +420,62 @@ Key Themes:
             summary_text = "Failed to generate summary."
             themes = []
 
+        if feedback_callback:
+            feedback_callback("Performing systematic research gap analysis...")
+
         # Find research gaps based on the summary
-        gap_prompt = f"Given this research summary on '{query}', suggest 3 key research gaps or areas where further research is needed:\n\n{summary_text}\n\nOutput 3 bullet points:"
+        gap_prompt = f"""You are an expert research planner. Based on the following literature review summary on '{query}', perform a systematic research gap analysis.
+        
+Identify:
+1. WHAT IS ESTABLISHED: Consensus or well-proven concepts across the papers.
+2. WHAT IS CONTESTED: Disagreements, conflicting findings, or inconsistencies between the studies.
+3. WHAT IS UNEXPLORED: Empty spaces, future work directions, or missing variables that have not been investigated.
+
+Summary:
+{summary_text}
+
+Output format:
+Established Consensus:
+- [Consensus item 1]
+- [Consensus item 2]
+
+Contested/Conflicting Areas:
+- [Conflict item 1]
+- [Conflict item 2]
+
+Unexplored Research Gaps:
+- [Gap item 1]
+- [Gap item 2]
+"""
+        established = []
+        contested = []
         gaps = []
         try:
             gap_response = self.model_provider.generate(gap_prompt, temperature=0.5)
+            current_section = None
             for line in gap_response.split("\n"):
                 line_strip = line.strip()
+                if not line_strip:
+                    continue
+                if "Established Consensus:" in line_strip:
+                    current_section = "established"
+                    continue
+                elif "Contested/Conflicting Areas:" in line_strip:
+                    current_section = "contested"
+                    continue
+                elif "Unexplored Research Gaps:" in line_strip:
+                    current_section = "gaps"
+                    continue
+                
                 if line_strip.startswith("-") or line_strip.startswith("*") or re.match(r"^\d+\.", line_strip):
-                    gaps.append(re.sub(r"^[-*\d\.\s]+", "", line_strip).strip())
+                    cleaned = re.sub(r"^[-*\d\.\s]+", "", line_strip).strip()
+                    if cleaned:
+                        if current_section == "established":
+                            established.append(cleaned)
+                        elif current_section == "contested":
+                            contested.append(cleaned)
+                        elif current_section == "gaps":
+                            gaps.append(cleaned)
         except Exception as e:
             logger.error(f"Failed to generate gaps: {e}")
 
@@ -388,10 +488,15 @@ Key Themes:
             "scores": scores,
             "contradictions": contradictions,
             "gaps": gaps or ["Insufficient data to determine research gaps."],
+            "established": established or ["No clear consensus documented."],
+            "contested": contested or ["No explicit contradictions/conflicts highlighted."],
             "summary": summary_text,
             "themes": themes,
             "confidence": avg_methodology
         }
+
+        if feedback_callback:
+            feedback_callback("Generating reports and exporting citation formats...")
 
         # Generate reports
         markdown_report = self.academic_reporter.generate_markdown(report_data)
@@ -422,6 +527,41 @@ Key Themes:
         export_bibtex(papers, bib_path)
         report_data["bib_path"] = bib_path
         
+        # Export RIS
+        from api.export_ris import export_ris
+        ris_path = os.path.join(reports_dir, f"references_{safe_query}_{timestamp}.ris")
+        export_ris(papers, ris_path)
+        report_data["ris_path"] = ris_path
+        
+        # Export CSV
+        from api.export_csv import export_csv
+        csv_path = os.path.join(reports_dir, f"references_{safe_query}_{timestamp}.csv")
+        export_csv(papers, scores, csv_path)
+        report_data["csv_path"] = csv_path
+        
+        # Export Obsidian Notebook
+        from api.export_obsidian import export_obsidian
+        obsidian_dir = os.path.join(reports_dir, f"obsidian_{safe_query}_{timestamp}")
+        export_obsidian(papers, scores, report_data, obsidian_dir)
+        report_data["obsidian_dir"] = obsidian_dir
+
+        if feedback_callback:
+            feedback_callback("Packaging workspace bundle...")
+
+        # Export Zip bundle
+        from api.export_packager import package_review
+        zip_path = os.path.join(reports_dir, f"review_{safe_query}_{timestamp}.zip")
+        package_review(
+            report_path=report_path,
+            latex_path=latex_path,
+            bib_path=bib_path,
+            ris_path=ris_path,
+            csv_path=csv_path,
+            obsidian_dir=obsidian_dir,
+            zip_path=zip_path
+        )
+        report_data["zip_path"] = zip_path
+        
         # Save to memory if enabled
         if self.memory:
             from memory.types import KnowledgeMemory
@@ -432,8 +572,11 @@ Key Themes:
                 content=mem_content,
                 timestamp=datetime.now(),
                 confidence=avg_methodology,
-                metadata={"report_path": report_path, "bib_path": bib_path}
+                metadata={"report_path": report_path, "bib_path": bib_path, "zip_path": zip_path}
             ))
+
+        if feedback_callback:
+            feedback_callback(f"Review complete! Saved review to reports folder.")
 
         self.final_report = report_data
         return report_data

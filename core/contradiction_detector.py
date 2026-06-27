@@ -1,6 +1,7 @@
 """Detect contradictions and conflicting findings in literature."""
 
 import logging
+import re
 from typing import List, Dict
 from core.model_provider import ModelProvider
 
@@ -11,31 +12,52 @@ class ContradictionDetector:
         self.llm = model_provider
 
     def detect(self, papers: List[Dict]) -> List[Dict]:
-        """Group findings and detect contradictions."""
+        """Group findings and detect contradictions using abstract and full-text (if available)."""
         if len(papers) < 2:
             return []
 
-        # Build a summary list
+        # Build detailed paper representations
         paper_summaries = []
-        for p in papers[:10]:  # limit to avoid token explosion
-            paper_summaries.append(f"Title: {p.get('title')}\nAbstract: {p.get('summary', '')[:500]}\n")
+        for i, p in enumerate(papers[:15]):  # limit to avoid token explosion
+            # If full-text is available, include first 1000 characters of full text
+            full_text_snip = ""
+            if p.get("full_text"):
+                full_text_snip = f"\nFull Text Snippet: {p['full_text'][:1000]}"
+                
+            authors_str = ", ".join(p.get("authors", [])[:2])
+            paper_summaries.append(
+                f"[{i+1}] Title: {p.get('title')}\n"
+                f"Authors: {authors_str} ({p.get('year', 'N/A')})\n"
+                f"Abstract: {p.get('summary', '')[:600]}\n"
+                f"{full_text_snip}"
+            )
 
         combined = "\n\n".join(paper_summaries)
-        prompt = f"""You are a research synthesizer. Review the following papers and identify any contradictions or conflicting results.
+        prompt = f"""You are an advanced academic research synthesizer. Analyze the following papers and identify contradictions, conflicting claims, or differing results.
+        
+Look specifically for:
+- Claims that oppose each other (e.g. A says X increases Y, B says X decreases or has no effect on Y).
+- Discrepancies in findings or conclusions.
+- Disagreements on methodologies that lead to contrasting results.
+
+Use explicit contradiction keywords (e.g., "contrary to", "disagrees", "refutes", "contradicts") where applicable in your analysis.
 
 Papers:
 {combined}
 
-For each contradiction, output:
-- Finding A: [paper title/description]
-- Finding B: [paper title/description]
-- Conflict: [description]
-- Confidence: [score 0-100]
+For each contradiction or major conflict identified, output exactly in the following format:
+Finding A: [paper title/description + citation number, e.g. [1]]
+Finding B: [paper title/description + citation number, e.g. [2]]
+Conflict: [detailed description of the conflict or contradiction]
+Confidence: [score 0-100]
 
 If no contradictions exist, output: "No contradictions detected."
 """
         try:
-            response = self.llm.generate(prompt, temperature=0.3)
+            response = self.llm.generate(
+                prompt,
+                system_prompt="You are a meticulous, objective researcher who excels at mapping contrasting claims across academic papers."
+            )
             contradictions = self._parse(response)
             return contradictions
         except Exception as e:
@@ -46,22 +68,24 @@ If no contradictions exist, output: "No contradictions detected."
         if "No contradictions detected" in response:
             return []
         contradictions = []
-        # Simple parsing: split by blank lines and look for patterns
         blocks = response.split("\n\n")
         for block in blocks:
             if "Finding A" in block and "Finding B" in block:
-                # Extract fields
                 a = b = conflict = confidence = ""
                 for line in block.split("\n"):
                     line_strip = line.strip()
-                    if "Finding A:" in line_strip:
-                        a = line_strip.replace("Finding A:", "").strip()
-                    elif "Finding B:" in line_strip:
-                        b = line_strip.replace("Finding B:", "").strip()
-                    elif "Conflict:" in line_strip:
-                        conflict = line_strip.replace("Conflict:", "").strip()
-                    elif "Confidence:" in line_strip:
-                        confidence = line_strip.replace("Confidence:", "").strip()
+                    line_clean = re.sub(r'^\*+\s*', '', line_strip)
+                    line_clean = re.sub(r'\*+\s*$', '', line_clean)
+                    
+                    if line_clean.lower().startswith("finding a:"):
+                        a = re.sub(r'(?i)^finding a:\s*', '', line_clean).strip()
+                    elif line_clean.lower().startswith("finding b:"):
+                        b = re.sub(r'(?i)^finding b:\s*', '', line_clean).strip()
+                    elif line_clean.lower().startswith("conflict:"):
+                        conflict = re.sub(r'(?i)^conflict:\s*', '', line_clean).strip()
+                    elif line_clean.lower().startswith("confidence:"):
+                        confidence = re.sub(r'(?i)^confidence:\s*', '', line_clean).strip()
+                        
                 if a and b:
                     contradictions.append({
                         "finding_a": a,

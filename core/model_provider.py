@@ -5,11 +5,21 @@ import httpx
 import logging
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+from core.key_manager import KeyManager
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 class ModelProvider:
+    # Estimate token pricing: tuple of (input_cost_per_1k, output_cost_per_1k)
+    PRICING = {
+        "openrouter/free": (0.0, 0.0),
+        "gpt-4o-mini": (0.00015, 0.0006),
+        "claude-3-haiku": (0.00025, 0.00125),
+        "gemini-1.5-flash": (0.000075, 0.0003),
+        "default": (0.0005, 0.0015)
+    }
+
     def __init__(
         self,
         provider: str = "openrouter",
@@ -21,23 +31,71 @@ class ModelProvider:
     ):
         self.provider = provider
         self.model = model
-        self.api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY")
+        self.api_key = api_key or KeyManager.get_key(provider)
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        
+        # Token usage and cost tracking
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_cost = 0.0
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate a response from the LLM."""
+        """Generate a response from the LLM and track estimated cost."""
         if self.provider == "openrouter":
-            return self._openrouter_generate(prompt, system_prompt)
+            response = self._openrouter_generate(prompt, system_prompt)
         elif self.provider == "openai":
-            return self._openai_generate(prompt, system_prompt)
+            response = self._openai_generate(prompt, system_prompt)
         elif self.provider == "anthropic":
-            return self._anthropic_generate(prompt, system_prompt)
+            response = self._anthropic_generate(prompt, system_prompt)
         elif self.provider == "ollama":
-            return self._ollama_generate(prompt, system_prompt)
+            response = self._ollama_generate(prompt, system_prompt)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
+            
+        self._track_usage(prompt, system_prompt or "", response)
+        return response
+
+    def _track_usage(self, prompt: str, system_prompt: str, response: str):
+        """Track input/output tokens and estimate costs."""
+        # Standard heuristic: 1 token ≈ 4 characters in English
+        input_len = len(prompt) + len(system_prompt)
+        output_len = len(response)
+        
+        in_tokens = int(input_len / 4)
+        out_tokens = int(output_len / 4)
+        
+        self.total_input_tokens += in_tokens
+        self.total_output_tokens += out_tokens
+        
+        # Determine pricing model
+        pricing_key = "default"
+        for key in self.PRICING:
+            if key in self.model:
+                pricing_key = key
+                break
+                
+        in_rate, out_rate = self.PRICING.get(pricing_key, self.PRICING["default"])
+        cost = (in_tokens / 1000.0 * in_rate) + (out_tokens / 1000.0 * out_rate)
+        self.total_cost += cost
+        logger.debug(f"LLM Call: {in_tokens} input, {out_tokens} output. Estimated Cost: ${cost:.6f}")
+
+    def get_cost_summary(self) -> Dict[str, Any]:
+        """Return a dictionary summarizing current run metrics."""
+        return {
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "total_tokens": self.total_input_tokens + self.total_output_tokens,
+            "total_cost": self.total_cost
+        }
+
+    def reset_cost(self):
+        """Reset cost tracking metrics."""
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_cost = 0.0
+
 
     def _openrouter_generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Call OpenRouter API."""

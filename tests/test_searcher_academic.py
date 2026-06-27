@@ -43,7 +43,7 @@ def test_search_arxiv_success(academic_searcher):
     assert results[0]["title"] == "Attention Is All You Need"
     assert results[0]["authors"] == ["Ashish Vaswani", "Noam Shazeer"]
     assert results[0]["year"] == "2017"
-    assert results[0]["doi"] == "http://dx.doi.org/10.1007/12345"
+    assert results[0]["doi"] == "10.1007/12345"
     assert results[0]["source"] == "arxiv"
 
 @respx.mock

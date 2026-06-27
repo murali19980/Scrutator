@@ -144,10 +144,10 @@ def load_config() -> dict:
 config = load_config()
 agent = ResearchAgent(config)
 
-def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode):
+def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode, uploaded_pdfs=None, progress=gr.Progress()):
     """Run research and return results to UI."""
     if not query:
-        return "Please enter a search query.", None, None, None, "Error: Empty query"
+        return "Please enter a search query.", None, None, None, None, None, None, "Error: Empty query"
     
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
     if not lang_list:
@@ -157,9 +157,48 @@ def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode)
     
     logger.info(f"UI trigger research: {query} (Academic: {academic_mode})")
     
+    # Live logger progress status callback
+    def progress_callback(status_msg):
+        logger.info(status_msg)
+        if "Searching" in status_msg:
+            progress(0.1, desc=status_msg)
+        elif "Checking" in status_msg:
+            progress(0.3, desc=status_msg)
+        elif "Scoring" in status_msg:
+            progress(0.5, desc=status_msg)
+        elif "Detecting" in status_msg:
+            progress(0.7, desc=status_msg)
+        elif "Synthesizing" in status_msg or "gap" in status_msg.lower():
+            progress(0.8, desc=status_msg)
+        elif "Generating" in status_msg or "Packaging" in status_msg:
+            progress(0.9, desc=status_msg)
+        else:
+            progress(0.95, desc=status_msg)
+            
     try:
-        # Run agent (without interactive ask support for web UI MVP, auto applies topic memories if ask selected)
-        # We map UI 'ask' to auto if it's running via Web UI.
+        progress(0.02, desc="Initializing research loop...")
+        
+        # Handle uploaded local PDFs
+        uploaded_papers = []
+        if academic_mode and uploaded_pdfs:
+            from core.scraper import extract_local_pdf
+            for idx, f in enumerate(uploaded_pdfs):
+                progress(0.05 + (idx / len(uploaded_pdfs)) * 0.05, desc=f"Reading uploaded PDF: {os.path.basename(f.name)}...")
+                pdf_text = extract_local_pdf(f.name)
+                if pdf_text:
+                    filename = os.path.basename(f.name)
+                    title = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
+                    uploaded_papers.append({
+                        "title": title,
+                        "summary": pdf_text[:800],
+                        "full_text": pdf_text,
+                        "authors": ["Local Upload"],
+                        "journal": "Local PDF Document",
+                        "year": datetime.now().strftime("%Y"),
+                        "source": "local_upload",
+                        "url": f"file:///{f.name.replace(os.sep, '/')}"
+                    })
+        
         agent_mem_mode = "auto" if memory_mode == "ask" else memory_mode
         
         report_data = agent.run(
@@ -168,11 +207,13 @@ def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode)
             mode=mode,
             regions=region_list,
             memory_mode=agent_mem_mode,
-            academic=academic_mode
+            academic=academic_mode,
+            feedback_callback=progress_callback,
+            uploaded_papers=uploaded_papers
         )
         
         if "error" in report_data:
-            return f"### ❌ Research Failed\n\n{report_data['error']}", None, None, None, f"Error: {report_data['error']}"
+            return f"### ❌ Research Failed\n\n{report_data['error']}", None, None, None, None, None, None, f"Error: {report_data['error']}"
             
         markdown_report = report_data["markdown"]
         report_path = report_data["report_path"]
@@ -180,15 +221,18 @@ def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode)
         if academic_mode:
             latex_path = report_data.get("latex_path")
             bib_path = report_data.get("bib_path")
-            status_done = f"🟢 Complete! Methodology Confidence: {report_data['confidence']:.1f}%. Saved to {report_path}"
-            return markdown_report, report_path, latex_path, bib_path, status_done
+            ris_path = report_data.get("ris_path")
+            csv_path = report_data.get("csv_path")
+            zip_path = report_data.get("zip_path")
+            status_done = f"🟢 Complete! Methodology Confidence: {report_data['confidence']:.1f}%. Saved bundle to {zip_path}"
+            return markdown_report, report_path, latex_path, bib_path, ris_path, csv_path, zip_path, status_done
         else:
-            status_done = f"🟢 Complete! Confidence Score: {report_data['overall_confidence']:.1f}/100. Saved to {report_path}"
-            return markdown_report, report_path, None, None, status_done
+            status_done = f"🟢 Complete! Confidence Score: {report_data['overall_confidence']:.1f}/100. Saved report to {report_path}"
+            return markdown_report, report_path, None, None, None, None, None, status_done
         
     except Exception as e:
         logger.error(f"UI research failed: {e}", exc_info=True)
-        return f"### ❌ Research Failed\n\nError: {e}", None, None, None, f"Error: {e}"
+        return f"### ❌ Research Failed\n\nError: {e}", None, None, None, None, None, None, f"Error: {e}"
 
 def list_memories():
     """Retrieve memories formatted for table."""
@@ -254,6 +298,7 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                     regions_input = gr.Textbox(label="Target Regions (Comma separated)", placeholder="US, CN, DE")
                     
                     academic_input = gr.Checkbox(label="Academic Mode (Literature Review)", value=False)
+                    uploaded_pdfs_input = gr.File(label="Upload local PDF papers (Optional)", file_count="multiple", file_types=[".pdf"])
                     
                     submit_btn = gr.Button("Start Research Agent", elem_classes="accent-btn")
                     
@@ -264,11 +309,15 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                         file_output = gr.File(label="Download Markdown Report")
                         latex_output = gr.File(label="Download LaTeX Report")
                         bib_output = gr.File(label="Download BibTeX Citations")
+                    with gr.Row():
+                        ris_output = gr.File(label="Download RIS References")
+                        csv_output = gr.File(label="Download CSV Table")
+                        zip_output = gr.File(label="Download Complete Zip Bundle")
 
             submit_btn.click(
                 fn=run_research_ui,
-                inputs=[query_input, mode_input, languages_input, regions_input, memory_input, academic_input],
-                outputs=[report_output, file_output, latex_output, bib_output, status_box]
+                inputs=[query_input, mode_input, languages_input, regions_input, memory_input, academic_input, uploaded_pdfs_input],
+                outputs=[report_output, file_output, latex_output, bib_output, ris_output, csv_output, zip_output, status_box]
             )
 
         # Memory Vault Tab
@@ -324,5 +373,30 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                     interactive=False
                 )
 
+# Auth configuration
+UI_USERNAME = os.getenv("SCRUTATOR_WEB_UI_USERNAME")
+UI_PASSWORD = os.getenv("SCRUTATOR_WEB_UI_PASSWORD")
+
+auth_creds = None
+if UI_USERNAME and UI_PASSWORD:
+    auth_creds = (UI_USERNAME, UI_PASSWORD)
+
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", server_port=7860)
+    server_name = os.getenv("SCRUTATOR_WEB_UI_BIND") or "127.0.0.1"
+    
+    if server_name == "0.0.0.0" and not auth_creds:
+        import secrets
+        temp_pass = secrets.token_hex(8)
+        auth_creds = ("admin", temp_pass)
+        logger.info(f"\n=================================================="
+                    f"\nRunning Web UI on 0.0.0.0 without custom credentials!"
+                    f"\nENFORCING TEMPORARY BASIC AUTH FOR SECURITY:"
+                    f"\nUsername: admin"
+                    f"\nPassword: {temp_pass}"
+                    f"\n==================================================\n")
+                    
+    demo.launch(
+        server_name=server_name,
+        server_port=7860,
+        auth=auth_creds
+    )

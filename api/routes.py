@@ -29,6 +29,24 @@ def load_config() -> dict:
 config = load_config()
 agent = ResearchAgent(config)
 
+from fastapi import Depends, Header, HTTPException, status
+import secrets
+
+API_KEY = os.getenv("SCRUTATOR_API_KEY") or config.get("api_key")
+if not API_KEY:
+    API_KEY = secrets.token_hex(16)
+    logger.info(f"\n=================================================="
+                f"\nGenerated Random REST API Master Key: {API_KEY}"
+                f"\nPass this key in the 'X-API-Key' header of requests."
+                f"\n==================================================\n")
+
+def verify_api_key(x_api_key: str = Header(None)):
+    if not x_api_key or x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key in 'X-API-Key' header"
+        )
+
 app = FastAPI(
     title="Scrutator Research API",
     description="REST endpoints for controlling Scrutator research agent and memory system.",
@@ -60,7 +78,7 @@ def get_status():
         "storage_type": config.get("memory", {}).get("storage_type")
     }
 
-@app.post("/research")
+@app.post("/research", dependencies=[Depends(verify_api_key)])
 def trigger_research(request: ResearchRequest):
     """Trigger a new autonomous research run."""
     try:
@@ -84,14 +102,14 @@ def trigger_research(request: ResearchRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/memories")
+@app.get("/memories", dependencies=[Depends(verify_api_key)])
 def get_memories():
     """Retrieve all memories in the vault."""
     if not agent.memory:
         return {"memories": [], "message": "Memory system disabled"}
     return {"memories": [m.to_dict() for m in agent.memory.entries]}
 
-@app.post("/memories")
+@app.post("/memories", dependencies=[Depends(verify_api_key)])
 def add_memory(request: MemoryCreateRequest):
     """Save a new preference or knowledge memory manually."""
     if not agent.memory:
@@ -108,7 +126,7 @@ def add_memory(request: MemoryCreateRequest):
     agent.memory.add(entry)
     return {"status": "Success", "id": entry_id}
 
-@app.post("/memories/compress")
+@app.post("/memories/compress", dependencies=[Depends(verify_api_key)])
 def compress_memories():
     """Trigger memory archival and compression."""
     if not agent.memory:
@@ -116,7 +134,7 @@ def compress_memories():
     agent.memory.compress()
     return {"status": "Success", "message": "Memory compressed"}
 
-@app.get("/reports")
+@app.get("/reports", dependencies=[Depends(verify_api_key)])
 def list_reports():
     """List all saved research reports."""
     reports_dir = config.get("output", {}).get("reports_dir", "./reports")
@@ -125,7 +143,7 @@ def list_reports():
     files = [f for f in os.listdir(reports_dir) if f.endswith(".md")]
     return {"reports": files}
 
-@app.get("/reports/{filename}")
+@app.get("/reports/{filename}", dependencies=[Depends(verify_api_key)])
 def get_report(filename: str):
     """Retrieve a completed report file."""
     reports_dir = config.get("output", {}).get("reports_dir", "./reports")

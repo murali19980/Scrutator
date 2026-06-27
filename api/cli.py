@@ -46,7 +46,7 @@ def load_config() -> dict:
     return config
 
 @click.command()
-@click.argument("query", required=True)
+@click.argument("query", required=False)
 @click.option("--regions", "-r", help="Comma-separated country codes (e.g. US,CN,DE)")
 @click.option("--languages", "-l", help="Comma-separated language codes (e.g. en,zh,de)")
 @click.option("--mode", "-m", default="balanced", type=click.Choice(["quick", "balanced", "deep"]), help="Research mode")
@@ -55,8 +55,31 @@ def load_config() -> dict:
 @click.option("--feedback", is_flag=True, help="Collect user feedback after research finishes")
 @click.option("--verbose", is_flag=True, help="Show debug logs")
 @click.option("--academic", is_flag=True, help="Run in academic literature review mode")
-def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, academic):
+@click.option("--set-key", nargs=2, metavar="<provider> <key_value>", help="Save an API key securely (e.g. openrouter sk-...)")
+@click.option("--delete-key", metavar="<provider>", help="Delete a stored API key")
+def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, academic, set_key, delete_key):
     """Scrutator - AI-powered autonomous global research assistant."""
+    if set_key:
+        provider, key_val = set_key
+        from core.key_manager import KeyManager
+        if KeyManager.set_key(provider, key_val):
+            click.echo(f"🟢 Successfully saved API key for '{provider}' securely.")
+        else:
+            click.echo(f"❌ Failed to save API key for '{provider}'.")
+        return
+        
+    if delete_key:
+        from core.key_manager import KeyManager
+        if KeyManager.delete_key(delete_key):
+            click.echo(f"🟢 Successfully deleted API key for '{delete_key}'.")
+        else:
+            click.echo(f"❌ Failed to delete API key for '{delete_key}' (key may not exist).")
+        return
+
+    if not query:
+        click.echo("❌ Error: Missing argument 'QUERY'. Please provide a research topic, or use key management options (e.g. --set-key).")
+        return
+
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 

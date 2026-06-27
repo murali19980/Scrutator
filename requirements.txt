@@ -35,3 +35,9 @@ structlog>=24.0.0
 
 # Progress
 tqdm>=4.66.0
+
+# Security & Utilities
+keyring>=24.3.0
+cryptography>=42.0.0
+pypdf>=4.0.0
+
