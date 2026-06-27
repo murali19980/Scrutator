@@ -62,7 +62,11 @@ class AcademicSearcher:
         self.rate_limits = self.config.get("rate_limits", {"arxiv": 3.0, "pubmed": 5.0, "openalex": 2.0})
         self.last_request_time = {"arxiv": 0.0, "pubmed": 0.0, "openalex": 0.0}
         self.lock = threading.Lock()
-        self.client = httpx.Client(timeout=30.0)
+        self.client = httpx.Client(
+            timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
+            follow_redirects=False,
+            headers={"User-Agent": f"Scrutator/0.2.0 (mailto:{self.user_email})"},
+        )
 
     def _wait_for_rate_limit(self, source: str):
         """Enforce thread-safe rate limiting per source."""

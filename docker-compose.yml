@@ -5,24 +5,67 @@ services:
     build: .
     container_name: scrutator_academic
     ports:
-      - "7860:7860"   # Gradio Web UI
-      - "8000:8000"   # FastAPI REST API
+      - "127.0.0.1:7860:7860"   # Bind to localhost ONLY (change for public)
+      - "127.0.0.1:8000:8000"   # Bind to localhost ONLY
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - USER_EMAIL=${USER_EMAIL}
-      - SCRUTATOR_API_KEY=${SCRUTATOR_API_KEY}
-      - SCRUTATOR_WEB_UI_USERNAME=${SCRUTATOR_WEB_UI_USERNAME}
-      - SCRUTATOR_WEB_UI_PASSWORD=${SCRUTATOR_WEB_UI_PASSWORD}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:7860}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SCRUTATOR_WEB_UI_BIND=${SCRUTATOR_WEB_UI_BIND:-127.0.0.1}
+    # API keys are provided via Docker secrets (see 'secrets' block below)
+    # rather than plain environment variables to prevent leakage via
+    # `docker inspect` or /proc/self/environ.
+    secrets:
+      - openrouter_api_key
+      - scrutator_api_key
+      - scrutator_web_ui_username
+      - scrutator_web_ui_password
+      - memory_hmac_key
     volumes:
-      - ./reports:/app/reports
-      - ./logs:/app/logs
-      - ./search_cache.db:/app/search_cache.db
-      - ./rate_limiter.db:/app/rate_limiter.db
+      - reports:/app/reports
+      - logs:/app/logs
+      - cache_data:/app/search_cache.db
+      - rate_limiter_data:/app/rate_limiter.db
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker secrets — create secret files in ./secrets/ then run:
+#   docker-compose up -d
+#
+# Quick setup:
+#   mkdir -p secrets
+#   echo "sk-your-key" > secrets/openrouter_api_key
+#   echo "your-api-key" > secrets/scrutator_api_key
+#   echo "admin" > secrets/scrutator_web_ui_username
+#   echo "strong-password" > secrets/scrutator_web_ui_password
+#   echo "$(openssl rand -hex 32)" > secrets/memory_hmac_key
+#   chmod 600 secrets/*
+# ─────────────────────────────────────────────────────────────────────────────
+secrets:
+  openrouter_api_key:
+    file: ./secrets/openrouter_api_key
+  scrutator_api_key:
+    file: ./secrets/scrutator_api_key
+  scrutator_web_ui_username:
+    file: ./secrets/scrutator_web_ui_username
+  scrutator_web_ui_password:
+    file: ./secrets/scrutator_web_ui_password
+  memory_hmac_key:
+    file: ./secrets/memory_hmac_key
+
+# Named volumes for data persistence
+volumes:
+  reports:
+  logs:
+  cache_data:
+  rate_limiter_data:

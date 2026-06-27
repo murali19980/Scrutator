@@ -525,18 +525,20 @@ if __name__ == "__main__":
     server_name = os.getenv("SCRUTATOR_WEB_UI_BIND") or "127.0.0.1"
     
     if server_name == "0.0.0.0" and not auth_creds:
-        import secrets
-        temp_pass = secrets.token_hex(8)
-        auth_creds = ("admin", temp_pass)
-        logger.info(f"\n=================================================="
-                    f"\nRunning Web UI on 0.0.0.0 without custom credentials!"
-                    f"\nENFORCING TEMPORARY BASIC AUTH FOR SECURITY:"
-                    f"\nUsername: admin"
-                    f"\nPassword: {temp_pass}"
-                    f"\n==================================================\n")
+        import sys
+        logger.critical(
+            "FATAL: SCRUTATOR_WEB_UI_BIND is set to 0.0.0.0 (public) "
+            "but SCRUTATOR_WEB_UI_USERNAME / SCRUTATOR_WEB_UI_PASSWORD are not set.\n"
+            "Running a public Gradio endpoint without authentication is a critical "
+            "security risk.\n"
+            "Set the username and password environment variables before starting, e.g.:\n"
+            "  SCRUTATOR_WEB_UI_USERNAME=admin SCRUTATOR_WEB_UI_PASSWORD=strongpassword\n"
+            "Refusing to start."
+        )
+        sys.exit(1)
                     
     demo.launch(
         server_name=server_name,
-        server_port=7860,
+        server_port=int(os.getenv("SCRUTATOR_WEB_UI_PORT", "7860")),
         auth=auth_creds
     )

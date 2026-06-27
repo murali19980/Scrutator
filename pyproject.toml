@@ -1,43 +1,61 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=70.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "scrutator"
-version = "0.1.0"
-description = "Local-first, AI-powered research assistant for global, multilingual research."
+version = "1.0.0-beta"
+description = "AI-powered academic literature review assistant with parallel search, citation networks, and full-text scoring."
 readme = "README.md"
 authors = [
     {name = "Scrutator Contributors", email = "you@example.com"}
 ]
 license = {text = "MIT"}
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.0.0",
     "httpx>=0.27.0",
-    "requests>=2.32.0",
     "pyyaml>=6.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
+    "readability-lxml>=0.8.0",
     "gradio>=4.0.0",
     "click>=8.1.0",
     "python-telegram-bot>=20.0",
     "fastapi>=0.110.0",
-    "uvicorn>=0.27.0",
+    "uvicorn[standard]>=0.27.0",
     "chromadb>=0.5.0",
     "sentence-transformers>=2.3.0",
     "langdetect>=1.0.0",
     "structlog>=24.0.0",
     "tqdm>=4.66.0",
+    "keyring>=24.3.0",
+    "cryptography>=42.0.0",
+    "pypdf>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.21.0",
+    "ruff>=0.4.0",
+    "black>=24.0.0",
+    "mypy>=1.10.0",
+    "types-pyyaml",
+    "bandit>=1.7.0",
+    "pip-audit>=2.7.0",
 ]
 
 [project.scripts]
@@ -50,3 +68,20 @@ include = ["core*", "memory*", "api*", "config*"]
 testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "--cov=core --cov=memory --cov-report=term --cov-report=html"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+select = ["E", "F", "W", "I", "N", "S", "B", "A", "C4", "UP"]
+ignore = ["S101", "S603"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+warn_return_any = false
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]

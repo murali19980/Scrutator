@@ -207,8 +207,8 @@ class ModelProvider:
         return response.content[0].text.strip()
 
     def _ollama_generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Call local Ollama instance."""
-        import requests
+        """Call local Ollama instance using httpx streaming."""
+        import json as _json
 
         url = "http://localhost:11434/api/generate"
         payload = {
@@ -218,24 +218,25 @@ class ModelProvider:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
-        response = requests.post(url, json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        # Ollama returns a stream; we collect the full response
+        ollama_timeout = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
         full_text = ""
         actual_usage = None
-        for line in response.iter_lines():
-            if line:
-                import json
-                data = json.loads(line)
-                full_text += data.get("response", "")
-                if data.get("done"):
-                    prompt_eval_count = data.get("prompt_eval_count", 0)
-                    eval_count = data.get("eval_count", 0)
-                    if prompt_eval_count or eval_count:
-                        actual_usage = {
-                            "prompt_tokens": prompt_eval_count,
-                            "completion_tokens": eval_count
-                        }
-                    break
+        with httpx.Client(timeout=ollama_timeout, follow_redirects=False) as client:
+            with client.stream("POST", url, json=payload) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if line:
+                        data = _json.loads(line)
+                        full_text += data.get("response", "")
+                        if data.get("done"):
+                            prompt_eval_count = data.get("prompt_eval_count", 0)
+                            eval_count = data.get("eval_count", 0)
+                            if prompt_eval_count or eval_count:
+                                actual_usage = {
+                                    "prompt_tokens": prompt_eval_count,
+                                    "completion_tokens": eval_count,
+                                }
+                            break
         self._last_actual_usage = actual_usage
         return full_text.strip()
+

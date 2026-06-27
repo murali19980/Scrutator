@@ -26,9 +26,25 @@ class SearchCache:
         self._init_db()
     
     def _init_db(self) -> None:
-        """Initialize the database with the required table."""
+        """Initialize the database with WAL mode and integrity verification."""
+        import os
+        existed = os.path.exists(self.db_path)
         conn = sqlite3.connect(self.db_path)
         try:
+            # Verify database integrity on startup if it already existed
+            if existed:
+                result = conn.execute("PRAGMA integrity_check").fetchone()
+                if result[0] != "ok":
+                    conn.close()
+                    raise RuntimeError(
+                        f"Corrupt SQLite cache database at {self.db_path}. "
+                        "Delete the file or restore from backup before restarting."
+                    )
+            # Enable WAL for better concurrent read/write performance
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA temp_store=MEMORY")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS search_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +57,8 @@ class SearchCache:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_query_source ON search_cache(query, source)")
             conn.commit()
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize SQLite cache database: {e}")
         finally:

@@ -127,7 +127,12 @@ app.add_middleware(
 async def rate_limit_middleware(request, call_next):
     client_ip = request.client.host if request.client else "unknown"
     if not _rate_limiter.is_allowed(client_ip):
-        raise HTTPException(status_code=429, detail="Too many requests. Please wait.")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Please wait."},
+            headers={"Retry-After": "60"},
+        )
     return await call_next(request)
 
 @app.get("/health")

@@ -1,4 +1,4 @@
-"""Tests for KeyManager, SSRFSafeAdapter, and new exporters."""
+"""Tests for KeyManager, SSRF transport, and new exporters."""
 
 import pytest
 import os
@@ -7,12 +7,10 @@ import zipfile
 import socket
 import ipaddress
 import httpx
-import requests
-import requests_mock
 from unittest.mock import MagicMock, patch
 
 from core.key_manager import KeyManager
-from core.scraper import SSRFSafeAdapter, is_ip_safe, get_safe_session
+from core.scraper import SSRFSafeTransport, is_ip_safe, make_safe_client, is_safe_url
 from api.export_ris import to_ris, export_ris
 from api.export_csv import export_csv
 from api.export_obsidian import export_obsidian
@@ -40,6 +38,46 @@ def test_key_manager_flow():
         assert KeyManager.delete_key("openrouter") is True
         mock_delete.assert_called_once_with("scrutator", "OPENROUTER_API_KEY")
 
+
+def test_read_secret_from_docker_secret_file(tmp_path):
+    """read_secret() should prefer Docker secret file over env var."""
+    secret_file = tmp_path / "test_api_key"
+    secret_file.write_text("docker-secret-value")
+
+    import core.key_manager as km_module
+    original_exists = km_module.os.path.exists
+
+    # Make os.path.exists return True only for our specific secret path
+    def fake_exists(p):
+        if p == "/run/secrets/test_api_key":
+            return True
+        return original_exists(p)
+
+    km_module.os.path.exists = fake_exists
+    # Patch the open call inside read_secret to point to our temp file
+    import builtins
+    real_open = builtins.open
+    def fake_open(p, *args, **kwargs):
+        if p == "/run/secrets/test_api_key":
+            return real_open(str(secret_file), *args, **kwargs)
+        return real_open(p, *args, **kwargs)
+
+    try:
+        with patch("builtins.open", fake_open), \
+             patch.dict("os.environ", {"TEST_API_KEY": "env-value"}):
+            result = KeyManager.read_secret("TEST_API_KEY")
+        assert result == "docker-secret-value"
+    finally:
+        km_module.os.path.exists = original_exists
+
+
+def test_read_secret_falls_back_to_env(monkeypatch):
+    """read_secret() should return env var when Docker secret file doesn't exist."""
+    monkeypatch.setenv("MY_SECRET_KEY", "from-env")
+    monkeypatch.setattr("os.path.exists", lambda p: False)
+    result = KeyManager.read_secret("MY_SECRET_KEY")
+    assert result == "from-env"
+
 # 2. SSRF IP Safety Checks
 def test_is_ip_safe():
     assert is_ip_safe("127.0.0.1") is False
@@ -52,39 +90,34 @@ def test_is_ip_safe():
     assert is_ip_safe("8.8.8.8") is True
     assert is_ip_safe("93.184.216.34") is True
 
-# 3. SSRFSafeAdapter and DNS Pinning Tests
-def test_ssrf_safe_adapter():
-    adapter = SSRFSafeAdapter()
-    req = requests.PreparedRequest()
-    req.url = "https://example.com/path"
-    req.headers = {}
-    
-    with patch("socket.getaddrinfo") as mock_dns, \
-         patch("requests.adapters.HTTPAdapter.send") as mock_super_send:
-         
-        mock_dns.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
-        mock_super_send.return_value = "mock_response"
-        
-        resp = adapter.send(req)
-        assert resp == "mock_response"
-        assert req.url == "https://93.184.216.34/path"
-        assert req.headers["Host"] == "example.com"
-        mock_super_send.assert_called_once()
-        args, kwargs = mock_super_send.call_args
-        assert kwargs.get("server_hostname") == "example.com"
+# 3. SSRFSafeTransport and DNS Pinning Tests (httpx-based)
+def test_ssrf_safe_transport_allows_safe_urls(monkeypatch):
+    """SSRFSafeTransport should allow safe public URLs."""
+    import core.scraper as scraper_module
+    monkeypatch.setattr(scraper_module, "is_safe_url", lambda url: True)
 
-def test_ssrf_safe_adapter_unsafe_ip():
-    adapter = SSRFSafeAdapter()
-    req = requests.PreparedRequest()
-    req.url = "https://unsafe-example.com/path"
-    req.headers = {}
-    
-    with patch("socket.getaddrinfo") as mock_dns:
-        mock_dns.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
-        
-        with pytest.raises(requests.exceptions.RequestException) as exc_info:
-            adapter.send(req)
-        assert "SSRF Block: Unsafe IP" in str(exc_info.value)
+    import respx
+    with respx.mock:
+        respx.get("https://example.com/path").mock(
+            return_value=httpx.Response(200, text="OK")
+        )
+        client = make_safe_client()
+        # With monkeypatched is_safe_url always True, should pass through
+        resp = client.get("https://example.com/path")
+        assert resp.status_code == 200
+        client.close()
+
+
+def test_ssrf_safe_transport_blocks_private_ip(monkeypatch):
+    """SSRFSafeTransport should raise ValueError for private IP destinations."""
+    import core.scraper as scraper_module
+    monkeypatch.setattr(scraper_module, "is_safe_url", lambda url: False)
+
+    transport = SSRFSafeTransport()
+    request = httpx.Request("GET", "http://192.168.1.1/secret")
+    with pytest.raises(ValueError, match="SSRF blocked"):
+        transport.handle_request(request)
+
 
 # 4. RIS Export Test
 def test_ris_export():

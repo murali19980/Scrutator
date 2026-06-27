@@ -58,7 +58,10 @@ class CitationNetwork:
             try:
                 url = f"{self.base_url}/{doi}"
                 headers = {"User-Agent": "Scrutator/1.0"}
-                async with httpx.AsyncClient(timeout=20) as client:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
+                    follow_redirects=False,
+                ) as client:
                     response = await client.get(url, headers=headers)
                     if response.status_code == 200:
                         data = response.json()

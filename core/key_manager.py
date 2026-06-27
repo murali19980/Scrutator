@@ -16,13 +16,32 @@ except ImportError:
 
 class KeyManager:
     @staticmethod
+    def read_secret(key_name: str) -> Optional[str]:
+        """Read a secret from Docker secret file first, then fall back to env var.
+        
+        Docker secrets are mounted at /run/secrets/<key_name_lowercase>.
+        This prevents API keys from appearing in `docker inspect` or /proc/self/environ.
+        """
+        secret_path = f"/run/secrets/{key_name.lower()}"
+        if os.path.exists(secret_path):
+            try:
+                with open(secret_path, "r") as f:
+                    value = f.read().strip()
+                if value:
+                    return value
+            except OSError as e:
+                logger.warning(f"Failed to read Docker secret {secret_path}: {e}")
+        return os.environ.get(key_name)
+
+    @staticmethod
     def get_key(provider: str) -> Optional[str]:
         """Retrieve API key for the given provider securely.
         
         Tries:
         1. System keychain (keyring)
         2. Local encrypted keys file (~/.scrutator_keys.enc)
-        3. Environment variable (plaintext fallback)
+        3. Docker secret file (/run/secrets/<provider>_api_key)
+        4. Environment variable (plaintext fallback)
         """
         provider_upper = provider.upper()
         
@@ -61,13 +80,16 @@ class KeyManager:
         except Exception as e:
             logger.warning(f"Failed to decrypt key file: {e}")
 
-        # 3. Plaintext environment fallback
-        key = os.getenv(f"{provider_upper}_API_KEY")
+        # 3. Docker secret or plaintext environment fallback
+        key = KeyManager.read_secret(f"{provider_upper}_API_KEY")
         if key:
-            logger.warning(
-                f"Using plaintext API key from environment/env file for {provider_upper}. "
-                "For better security, store keys in the system keychain."
-            )
+            # Only warn if it came from env, not Docker secrets
+            secret_path = f"/run/secrets/{provider_upper.lower()}_api_key"
+            if not os.path.exists(secret_path):
+                logger.warning(
+                    f"Using plaintext API key from environment for {provider_upper}. "
+                    "For better security, use Docker secrets or the system keychain."
+                )
         return key
 
     @staticmethod

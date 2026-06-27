@@ -68,6 +68,9 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 
+# Docker secrets (NEVER commit these)
+secrets/
+
 # Database caches
 search_cache.db
 usage.db
