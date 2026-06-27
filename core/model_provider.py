@@ -40,6 +40,15 @@ class ModelProvider:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_cost = 0.0
+        self._last_actual_usage = None
+
+    def get_token_usage(self) -> Dict[str, int]:
+        """Return cumulative token usage."""
+        return {
+            "input_tokens": self.total_input_tokens,
+            "output_tokens": self.total_output_tokens,
+            "total_tokens": self.total_input_tokens + self.total_output_tokens
+        }
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Generate a response from the LLM and track estimated cost, retrying on transient errors."""
@@ -49,6 +58,7 @@ class ModelProvider:
         
         for attempt in range(max_retries + 1):
             try:
+                self._last_actual_usage = None
                 if self.provider == "openrouter":
                     response = self._openrouter_generate(prompt, system_prompt)
                 elif self.provider == "openai":
@@ -60,7 +70,7 @@ class ModelProvider:
                 else:
                     raise ValueError(f"Unknown provider: {self.provider}")
                 
-                self._track_usage(prompt, system_prompt or "", response)
+                self._track_usage(prompt, system_prompt or "", response, self._last_actual_usage)
                 return response
             except Exception as e:
                 e_str = str(e).lower()
@@ -73,14 +83,17 @@ class ModelProvider:
                 logger.error(f"LLM generation failed after all attempts: {e}")
                 raise
 
-    def _track_usage(self, prompt: str, system_prompt: str, response: str):
+    def _track_usage(self, prompt: str, system_prompt: str, response: str, actual_usage: Optional[Dict[str, int]] = None):
         """Track input/output tokens and estimate costs."""
-        # Standard heuristic: 1 token ≈ 4 characters in English
-        input_len = len(prompt) + len(system_prompt)
-        output_len = len(response)
-        
-        in_tokens = int(input_len / 4)
-        out_tokens = int(output_len / 4)
+        if actual_usage:
+            in_tokens = actual_usage.get("prompt_tokens") or actual_usage.get("input_tokens") or 0
+            out_tokens = actual_usage.get("completion_tokens") or actual_usage.get("output_tokens") or 0
+        else:
+            # Standard heuristic: 1 token ≈ 4 characters in English
+            input_len = len(prompt) + len(system_prompt)
+            output_len = len(response)
+            in_tokens = int(input_len / 4)
+            out_tokens = int(output_len / 4)
         
         self.total_input_tokens += in_tokens
         self.total_output_tokens += out_tokens
@@ -111,6 +124,7 @@ class ModelProvider:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_cost = 0.0
+        self._last_actual_usage = None
 
 
     def _openrouter_generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
@@ -139,6 +153,12 @@ class ModelProvider:
             response = httpx.post(url, headers=headers, json=payload, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
+            usage = data.get("usage")
+            if usage:
+                self._last_actual_usage = {
+                    "prompt_tokens": usage.get("prompt_tokens") or usage.get("input_tokens") or 0,
+                    "completion_tokens": usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                }
             return data["choices"][0]["message"]["content"].strip()
         except Exception as e:
             logger.error(f"OpenRouter generation failed: {e}")
@@ -160,6 +180,11 @@ class ModelProvider:
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
+        if hasattr(response, "usage") and response.usage:
+            self._last_actual_usage = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens
+            }
         return response.choices[0].message.content.strip()
 
     def _anthropic_generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
@@ -174,6 +199,11 @@ class ModelProvider:
             system=system_prompt or "",
             messages=[{"role": "user", "content": prompt}]
         )
+        if hasattr(response, "usage") and response.usage:
+            self._last_actual_usage = {
+                "prompt_tokens": response.usage.input_tokens,
+                "completion_tokens": response.usage.output_tokens
+            }
         return response.content[0].text.strip()
 
     def _ollama_generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
@@ -192,11 +222,20 @@ class ModelProvider:
         response.raise_for_status()
         # Ollama returns a stream; we collect the full response
         full_text = ""
+        actual_usage = None
         for line in response.iter_lines():
             if line:
                 import json
                 data = json.loads(line)
                 full_text += data.get("response", "")
                 if data.get("done"):
+                    prompt_eval_count = data.get("prompt_eval_count", 0)
+                    eval_count = data.get("eval_count", 0)
+                    if prompt_eval_count or eval_count:
+                        actual_usage = {
+                            "prompt_tokens": prompt_eval_count,
+                            "completion_tokens": eval_count
+                        }
                     break
+        self._last_actual_usage = actual_usage
         return full_text.strip()

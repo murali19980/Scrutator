@@ -224,6 +224,15 @@ class AcademicReporter:
 
         md += "\n## Methodology\n- Academic databases used: ArXiv, PubMed, OpenAlex\n- Confidence scoring: three-factor (methodology, results, novelty)\n- Contradiction detection via LLM synthesis\n- Rate limiting and SSRF protection applied\n"
 
+        token_usage = report_data.get("token_usage", {})
+        if token_usage:
+            md += f"""
+## 📊 Token Usage
+- **Input Tokens:** {token_usage.get('input_tokens', 0):,}
+- **Output Tokens:** {token_usage.get('output_tokens', 0):,}
+- **Total Tokens:** {token_usage.get('total_tokens', 0):,}
+"""
+
         md += "\n## Full Citation List\n"
         for paper in papers:
             authors = ", ".join(paper.get('authors', [])) if paper.get('authors') else "Anonymous"

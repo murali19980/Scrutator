@@ -154,6 +154,9 @@ def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, a
             else:
                 print(f"Methodology Confidence: {report_data['confidence']:.1f}%")
                 print(f"Total Papers Found: {len(report_data['papers'])}")
+                token_usage = report_data.get("token_usage", {})
+                if token_usage:
+                    print(f"📊 Tokens Used: {token_usage.get('total_tokens', 0):,} (Input: {token_usage.get('input_tokens', 0):,}, Output: {token_usage.get('output_tokens', 0):,})")
                 print(f"Report Saved to: {report_data['report_path']}")
                 print(f"BibTeX Saved to: {report_data['bib_path']}")
                 print(f"LaTeX Saved to: {report_data['latex_path']}")

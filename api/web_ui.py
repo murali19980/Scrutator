@@ -16,67 +16,86 @@ logger = logging.getLogger("scrutator.web_ui")
 
 # Custom CSS for modern glassmorphism dark theme
 custom_css = """
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
-
-body, .gradio-container {
-    background: linear-gradient(135deg, #0b0f19 0%, #1a1b35 50%, #0d0f1b 100%) !important;
-    font-family: 'Inter', sans-serif !important;
-    color: #f3f4f6 !important;
+/* Glassmorphism dark theme */
+.gradio-container {
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e) !important;
+    min-height: 100vh;
+    padding: 20px;
+    font-family: 'Segoe UI', system-ui, sans-serif;
 }
-
-h1, h2, h3, h4 {
-    font-family: 'Outfit', sans-serif !important;
-    font-weight: 600 !important;
-    letter-spacing: -0.02em !important;
-}
-
-/* Glassmorphism card panel */
-.glass-panel {
-    background: rgba(17, 24, 39, 0.6) !important;
+.gr-box, .glass-panel {
+    background: rgba(255, 255, 255, 0.05) !important;
     backdrop-filter: blur(12px) !important;
     -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
     border-radius: 16px !important;
     padding: 24px !important;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+    transition: transform 0.2s ease, box-shadow 0.3s ease;
 }
-
-/* Gradio container customization */
-.gradio-container {
-    max-width: 1200px !important;
-    margin: 0 auto !important;
+.gr-box:hover, .glass-panel:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
 }
-
-/* Accent Buttons */
-.accent-btn {
-    background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%) !important;
-    color: white !important;
+.gr-button, .accent-btn {
+    background: linear-gradient(135deg, #667eea, #764ba2) !important;
     border: none !important;
     border-radius: 12px !important;
-    font-family: 'Outfit', sans-serif !important;
+    padding: 12px 28px !important;
     font-weight: 600 !important;
-    padding: 10px 20px !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.4) !important;
+    color: white !important;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
 }
-
-.accent-btn:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 6px 20px 0 rgba(168, 85, 247, 0.6) !important;
+.gr-button:hover, .accent-btn:hover {
+    transform: scale(1.03);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
 }
-
-/* Secondary Button */
-.sec-btn {
-    background: rgba(255, 255, 255, 0.05) !important;
-    color: #e5e7eb !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    border-radius: 12px !important;
-    transition: all 0.2s ease !important;
+.gr-button:active, .accent-btn:active {
+    transform: scale(0.97);
 }
-
-.sec-btn:hover {
-    background: rgba(255, 255, 255, 0.1) !important;
-    border-color: rgba(255, 255, 255, 0.2) !important;
+.gr-textbox input, .gr-textbox textarea {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 10px !important;
+    color: white !important;
+    padding: 12px !important;
+}
+.gr-textbox input:focus, .gr-textbox textarea:focus {
+    border-color: #667eea !important;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3) !important;
+}
+label, .gr-markdown p, .gr-markdown h1, .gr-markdown h2, .gr-markdown h3 {
+    color: #e0e0e0 !important;
+}
+.gr-markdown h1 {
+    font-size: 2.5rem !important;
+    font-weight: 700 !important;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.gr-progress-bar {
+    background: linear-gradient(90deg, #667eea, #764ba2) !important;
+    border-radius: 8px !important;
+}
+.gr-checkbox input[type="checkbox"] {
+    accent-color: #764ba2;
+}
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+}
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #764ba2;
 }
 
 /* Header styled with gradient */
@@ -95,71 +114,6 @@ h1, h2, h3, h4 {
     font-size: 1.1rem !important;
     text-align: center;
     margin-bottom: 30px !important;
-}
-
-/* Tabs */
-.tabs {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
-}
-
-.tab-nav button.selected {
-    border-bottom-color: #a855f7 !important;
-    color: #c084fc !important;
-}
-
-/* Custom progress box */
-.status-log {
-    background-color: #05070f !important;
-    border-left: 4px solid #6366f1 !important;
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 0.9rem !important;
-    color: #34d399 !important;
-    padding: 12px !important;
-    border-radius: 8px !important;
-}
-
-/* Mobile-first responsive design */
-@media screen and (max-width: 768px) {
-    .gradio-container {
-        padding: 10px !important;
-    }
-    .gr-row {
-        flex-direction: column !important;
-        gap: 10px !important;
-    }
-    .gr-box {
-        padding: 10px !important;
-    }
-    /* Touch-friendly buttons (min 44px) */
-    .gr-button {
-        min-height: 44px !important;
-        min-width: 44px !important;
-        font-size: 16px !important;
-        padding: 12px 20px !important;
-    }
-    /* Input fields larger on mobile */
-    .gr-textbox textarea {
-        font-size: 16px !important;
-        padding: 12px !important;
-    }
-    /* Collapsible logs */
-    .log-section {
-        max-height: 200px !important;
-        overflow-y: auto !important;
-    }
-}
-
-@media screen and (max-width: 480px) {
-    .gradio-container {
-        padding: 5px !important;
-    }
-    .gr-button {
-        font-size: 14px !important;
-        padding: 10px 16px !important;
-    }
-    .gr-box {
-        padding: 8px !important;
-    }
 }
 """
 
@@ -309,16 +263,21 @@ async def run_research_ui(
         markdown_report = report_data["markdown"]
         report_path = report_data["report_path"]
         
+        token_usage = report_data.get("token_usage") or agent.model_provider.get_token_usage()
+        token_info = ""
+        if token_usage and token_usage.get("total_tokens", 0) > 0:
+            token_info = f" | 📊 Tokens: {token_usage.get('total_tokens', 0):,} (Input: {token_usage.get('input_tokens', 0):,}, Output: {token_usage.get('output_tokens', 0):,})"
+        
         if academic_mode:
             latex_path = report_data.get("latex_path")
             bib_path = report_data.get("bib_path")
             ris_path = report_data.get("ris_path")
             csv_path = report_data.get("csv_path")
             zip_path = report_data.get("zip_path")
-            status_done = f"🟢 Complete! Methodology Confidence: {report_data['confidence']:.1f}%. Saved bundle to {zip_path}"
+            status_done = f"🟢 Complete! Methodology Confidence: {report_data['confidence']:.1f}%. Saved bundle to {zip_path}{token_info}"
             return markdown_report, report_path, latex_path, bib_path, ris_path, csv_path, zip_path, status_done
         else:
-            status_done = f"🟢 Complete! Confidence Score: {report_data['overall_confidence']:.1f}/100. Saved report to {report_path}"
+            status_done = f"🟢 Complete! Confidence Score: {report_data['overall_confidence']:.1f}/100. Saved report to {report_path}{token_info}"
             return markdown_report, report_path, None, None, None, None, None, status_done
         
     except Exception as e:
@@ -393,7 +352,15 @@ def compress_memories_ui():
     return "Memory store compressed successfully."
 
 # Build UI
-with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
+with gr.Blocks(
+    css=custom_css,
+    title="Scrutator Academic",
+    theme=gr.themes.Soft(
+        primary_hue="indigo",
+        secondary_hue="purple",
+        font=gr.themes.GoogleFont("Segoe UI")
+    )
+) as demo:
     gr.HTML("<h1 class='header-title'>Scrutator</h1>")
     gr.HTML("<p class='header-subtitle'>Local‑First Multilingual AI Research Assistant</p>")
     

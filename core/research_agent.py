@@ -949,7 +949,8 @@ Unexplored Research Gaps:
             "confidence": avg_methodology,
             "network_stats": network_stats if 'network_stats' in locals() else None,
             "citation_graph": citation_net if 'citation_net' in locals() else None,
-            "partial": partial_failure
+            "partial": partial_failure,
+            "token_usage": self.model_provider.get_token_usage()
         }
 
         await tracker.update("exporting", "Generating reports and exporting citation formats...", 0.9)
