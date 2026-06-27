@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  scrutator:
+    build: .
+    container_name: scrutator_academic
+    ports:
+      - "7860:7860"   # Gradio Web UI
+      - "8000:8000"   # FastAPI REST API
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - USER_EMAIL=${USER_EMAIL}
+      - SCRUTATOR_API_KEY=${SCRUTATOR_API_KEY}
+      - SCRUTATOR_WEB_UI_USERNAME=${SCRUTATOR_WEB_UI_USERNAME}
+      - SCRUTATOR_WEB_UI_PASSWORD=${SCRUTATOR_WEB_UI_PASSWORD}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:7860}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./search_cache.db:/app/search_cache.db
+      - ./rate_limiter.db:/app/rate_limiter.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

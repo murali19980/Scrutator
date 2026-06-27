@@ -737,10 +737,18 @@ Unexplored Research Gaps:
                                     pdf_url = data["best_oa_location"].get("url_for_pdf")
                                     if pdf_url:
                                         logger.info(f"Downloading Open-Access PDF (Unpaywall) for: {p['title']}...")
-                                        full_text = await asyncio.to_thread(download_and_extract_pdf, pdf_url)
-                                        if full_text:
-                                            p["full_text"] = full_text
-                                            p["oa_pdf_url"] = pdf_url
+                                        try:
+                                            full_text = await asyncio.wait_for(
+                                                asyncio.to_thread(download_and_extract_pdf, pdf_url),
+                                                timeout=30.0
+                                            )
+                                            if full_text:
+                                                p["full_text"] = full_text
+                                                p["oa_pdf_url"] = pdf_url
+                                        except asyncio.TimeoutError:
+                                            logger.warning(f"Timeout downloading Unpaywall PDF for {doi}")
+                                        except Exception as e:
+                                            logger.warning(f"Error downloading Unpaywall PDF for {doi}: {e}")
                         
                         # Fallback to CORE API
                         if not p.get("full_text"):
@@ -756,10 +764,21 @@ Unexplored Research Gaps:
                                         download_url = core_data.get("downloadUrl")
                                         if download_url and is_safe_url(download_url):
                                             logger.info(f"Downloading Open-Access PDF (CORE) for: {p['title']}...")
-                                            full_text = await asyncio.to_thread(download_and_extract_pdf, download_url)
-                                            if full_text:
-                                                p["full_text"] = full_text
-                                                p["oa_pdf_url"] = download_url
+                                            try:
+                                                full_text = await asyncio.wait_for(
+                                                    asyncio.to_thread(download_and_extract_pdf, download_url),
+                                                    timeout=30.0
+                                                )
+                                                if full_text:
+                                                    p["full_text"] = full_text
+                                                    p["oa_pdf_url"] = download_url
+                                            except asyncio.TimeoutError:
+                                                logger.warning(f"Timeout downloading CORE PDF for {doi}")
+                                            except Exception as e:
+                                                logger.warning(f"Error downloading CORE PDF for {doi}: {e}")
+                                            
+                            else:
+                                logger.info("CORE API Key missing. Skipping CORE PDF download fallback.")
                     except Exception as e:
                         logger.warning(f"Full-text extraction check failed for DOI {doi}: {e}")
 
@@ -768,15 +787,30 @@ Unexplored Research Gaps:
 
         await tracker.update("scoring", "Scoring papers along three dimensions...", 0.4)
         
-        scores = []
-        for idx, p in enumerate(papers):
-            if self.is_cancelled():
-                return {"status": "cancelled"}
-            progress_val = 0.4 + (0.2 * (idx + 1) / len(papers))
-            await tracker.update("scoring", f"Scoring paper: {p['title'][:40]}...", progress_val)
-            
-            score = await asyncio.to_thread(self.paper_scorer.score, p)
-            scores.append(score)
+        score_semaphore = asyncio.Semaphore(3)
+        
+        async def score_single(paper: Dict, idx: int) -> Dict:
+            async with score_semaphore:
+                if self.is_cancelled():
+                    return {
+                        "methodology": 50, "results": 50, "novelty": 50,
+                        "methodology_sd": 0.0, "results_sd": 0.0, "novelty_sd": 0.0,
+                        "justification": "Research cancelled."
+                    }
+                progress_val = 0.4 + (0.2 * (idx + 1) / len(papers))
+                await tracker.update("scoring", f"Scoring paper: {paper['title'][:40]}...", progress_val)
+                try:
+                    return await asyncio.to_thread(self.paper_scorer.score, paper)
+                except Exception as e:
+                    logger.error(f"Scoring error for paper {paper.get('title')}: {e}")
+                    return {
+                        "methodology": 50, "results": 50, "novelty": 50,
+                        "methodology_sd": 0.0, "results_sd": 0.0, "novelty_sd": 0.0,
+                        "justification": f"Scoring failed: {e}"
+                    }
+        
+        tasks = [score_single(p, i) for i, p in enumerate(papers)]
+        scores = list(await asyncio.gather(*tasks))
 
         if self.is_cancelled():
             return {"status": "cancelled"}

@@ -55,27 +55,51 @@ def verify_api_key(x_api_key: str = Header(None)):
         )
 
 import time
-from collections import defaultdict
+import sqlite3
 
-# Rate Limiter
-class RateLimiter:
-    def __init__(self, requests_per_minute: int = 100):
+# Persistent Rate Limiter (SQLite-backed)
+class PersistentRateLimiter:
+    def __init__(self, db_path: str = "rate_limiter.db", requests_per_minute: int = 100):
+        self.db_path = db_path
         self.requests_per_minute = requests_per_minute
-        self.requests = defaultdict(list)
+        self._init_db()
+    
+    def _init_db(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rate_requests (
+                client_id TEXT,
+                timestamp REAL,
+                PRIMARY KEY (client_id, timestamp)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_client_timestamp ON rate_requests(client_id, timestamp)")
+        conn.commit()
+        conn.close()
     
     def is_allowed(self, client_id: str) -> bool:
         now = time.time()
+        cutoff = now - 60
+        
+        conn = sqlite3.connect(self.db_path)
         # Clean old entries
-        self.requests[client_id] = [
-            t for t in self.requests[client_id]
-            if now - t < 60
-        ]
-        if len(self.requests[client_id]) >= self.requests_per_minute:
+        conn.execute("DELETE FROM rate_requests WHERE timestamp < ?", (cutoff,))
+        # Count recent requests
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM rate_requests WHERE client_id = ? AND timestamp >= ?",
+            (client_id, cutoff)
+        )
+        count = cur.fetchone()[0]
+        if count >= self.requests_per_minute:
+            conn.close()
             return False
-        self.requests[client_id].append(now)
+        # Insert new request
+        conn.execute("INSERT INTO rate_requests (client_id, timestamp) VALUES (?, ?)", (client_id, now))
+        conn.commit()
+        conn.close()
         return True
 
-_rate_limiter = RateLimiter()
+_rate_limiter = PersistentRateLimiter()
 
 app = FastAPI(
     title="Scrutator Research API",
@@ -84,8 +108,12 @@ app = FastAPI(
 )
 
 # CORS configuration
-cors_origins_str = os.getenv("CORS_ORIGINS") or config.get("cors_origins", "*")
-cors_origins = [o.strip() for o in cors_origins_str.split(",") if o.strip()] if cors_origins_str != "*" else ["*"]
+cors_origins_str = os.getenv("CORS_ORIGINS") or config.get("cors_origins", "")
+if cors_origins_str:
+    cors_origins = [o.strip() for o in cors_origins_str.split(",") if o.strip()]
+else:
+    cors_origins = ["http://localhost:7860"]
+    logger.warning("CORS_ORIGINS not set. Defaulting to %s", cors_origins)
 
 app.add_middleware(
     CORSMiddleware,

@@ -71,3 +71,5 @@ docker-compose.override.yml
 search_cache.db
 usage.db
 users.db
+rate_limiter.db
+

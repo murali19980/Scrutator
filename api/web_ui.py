@@ -220,11 +220,11 @@ async def run_research_ui(
         if academic_mode and uploaded_pdfs:
             from core.scraper import extract_local_pdf
             for idx, f in enumerate(uploaded_pdfs):
-                # Validate file size (max 50MB)
+                # Validate file size (max 10MB)
                 try:
                     file_size = os.path.getsize(f.name)
-                    if file_size > 50 * 1024 * 1024:
-                        logger.warning(f"File {f.name} exceeds max size limit of 50MB. Skipping.")
+                    if file_size > 10 * 1024 * 1024:
+                        logger.warning(f"File {f.name} exceeds max size limit of 10MB. Skipping.")
                         continue
                 except Exception as e:
                     logger.error(f"Error checking file size for {f.name}: {e}")
@@ -547,8 +547,8 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
             )
 
 # Auth configuration
-UI_USERNAME = os.getenv("SCRUTATOR_WEB_UI_USERNAME")
-UI_PASSWORD = os.getenv("SCRUTATOR_WEB_UI_PASSWORD")
+UI_USERNAME = os.getenv("SCRUTATOR_WEB_UI_USERNAME") or os.getenv("GRADIO_USERNAME")
+UI_PASSWORD = os.getenv("SCRUTATOR_WEB_UI_PASSWORD") or os.getenv("GRADIO_PASSWORD")
 
 auth_creds = None
 if UI_USERNAME and UI_PASSWORD:

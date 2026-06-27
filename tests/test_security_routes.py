@@ -3,8 +3,10 @@ Tests for REST API routes, CORS origins, and rate limiting.
 """
 
 import pytest
+import tempfile
+import os
 from fastapi.testclient import TestClient
-from api.routes import app, RateLimiter
+from api.routes import app, PersistentRateLimiter
 
 def test_health_endpoint():
     """Test health check route."""
@@ -15,10 +17,12 @@ def test_health_endpoint():
 
 def test_rate_limiter():
     """Test rate limiter logic."""
-    limiter = RateLimiter(requests_per_minute=2)
-    assert limiter.is_allowed("client_1") is True
-    assert limiter.is_allowed("client_1") is True
-    assert limiter.is_allowed("client_1") is False  # 3rd request blocked
-    
-    # Other client is unaffected
-    assert limiter.is_allowed("client_2") is True
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "rate.db")
+        limiter = PersistentRateLimiter(db_path=db_path, requests_per_minute=2)
+        assert limiter.is_allowed("client_1") is True
+        assert limiter.is_allowed("client_1") is True
+        assert limiter.is_allowed("client_1") is False  # 3rd request blocked
+        
+        # Other client is unaffected
+        assert limiter.is_allowed("client_2") is True
