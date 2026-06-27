@@ -607,7 +607,7 @@ Unexplored Research Gaps:
         self._cancelled = False
         
         try:
-            async with anyio.CancelScope() as scope:
+            with anyio.CancelScope() as scope:
                 self._cancel_scope = scope
                 await self.progress_tracker.update("initializing", "Starting research loop...", 0.0)
                 
