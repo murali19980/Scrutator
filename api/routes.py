@@ -19,7 +19,8 @@ from memory.types import MemoryEntry, PreferenceMemory
 
 # Initialize configuration
 def load_config() -> dict:
-    config_path = "./config/settings.yaml"
+    from core.config import get_config_path
+    config_path = get_config_path("settings.yaml")
     if not os.path.exists(config_path):
         return {
             "model": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.7},
@@ -53,19 +54,61 @@ def verify_api_key(x_api_key: str = Header(None)):
             detail="Invalid or missing API key in 'X-API-Key' header"
         )
 
+import time
+from collections import defaultdict
+
+# Rate Limiter
+class RateLimiter:
+    def __init__(self, requests_per_minute: int = 100):
+        self.requests_per_minute = requests_per_minute
+        self.requests = defaultdict(list)
+    
+    def is_allowed(self, client_id: str) -> bool:
+        now = time.time()
+        # Clean old entries
+        self.requests[client_id] = [
+            t for t in self.requests[client_id]
+            if now - t < 60
+        ]
+        if len(self.requests[client_id]) >= self.requests_per_minute:
+            return False
+        self.requests[client_id].append(now)
+        return True
+
+_rate_limiter = RateLimiter()
+
 app = FastAPI(
     title="Scrutator Research API",
     description="REST endpoints for controlling Scrutator research agent and memory system.",
     version="0.1.0"
 )
 
+# CORS configuration
+cors_origins_str = os.getenv("CORS_ORIGINS") or config.get("cors_origins", "*")
+cors_origins = [o.strip() for o in cors_origins_str.split(",") if o.strip()] if cors_origins_str != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=True if cors_origins != ["*"] else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    if not _rate_limiter.is_allowed(client_ip):
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait.")
+    return await call_next(request)
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "timestamp": datetime.now().isoformat()
+    }
 
 # Request Models
 class ResearchRequest(BaseModel):

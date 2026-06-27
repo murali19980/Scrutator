@@ -597,7 +597,8 @@ Unexplored Research Gaps:
         memory_mode: str = "ask",
         feedback_callback = None,
         academic: bool = False,
-        uploaded_papers: List[Dict] = None
+        uploaded_papers: List[Dict] = None,
+        filter_config: Optional[Dict] = None
     ) -> Dict:
         """Asynchronous entry point supporting progress callbacks and cancellation."""
         self.progress_tracker = ProgressTracker()
@@ -611,7 +612,7 @@ Unexplored Research Gaps:
                 await self.progress_tracker.update("initializing", "Starting research loop...", 0.0)
                 
                 if academic:
-                    result = await self._run_academic_async(query, mode, max_loops, uploaded_papers)
+                    result = await self._run_academic_async(query, mode, max_loops, uploaded_papers, filter_config)
                 else:
                     result = await self._run_regular_async(
                         query=query,
@@ -676,11 +677,13 @@ Unexplored Research Gaps:
         query: str,
         mode: str,
         max_loops: Optional[int] = None,
-        uploaded_papers: List[Dict] = None
+        uploaded_papers: List[Dict] = None,
+        filter_config: Optional[Dict] = None
     ) -> Dict:
         """Run async academic literature review loop with step updates and cancellation boundaries."""
         logger.info(f"Starting academic literature review (async) for: {query}")
         tracker = self.progress_tracker or ProgressTracker()
+        partial_failure = False
         
         await tracker.update("searching", "Searching academic databases (ArXiv, PubMed, OpenAlex)...", 0.1)
         
@@ -697,10 +700,14 @@ Unexplored Research Gaps:
         if uploaded_papers:
             papers = uploaded_papers + papers
             
+        if filter_config:
+            logger.info(f"Applying inclusion/exclusion filters: {filter_config}")
+            papers = self._apply_filters(papers, filter_config)
+            
         if not papers:
             logger.warning("No academic papers found.")
-            await tracker.update("error", "No academic papers found.", 1.0)
-            return {"error": "No academic papers found."}
+            await tracker.update("error", "No academic papers found matching filter criteria.", 1.0)
+            return {"error": "No academic papers found matching filter criteria."}
 
         # Unpaywall PDF full text extraction (if enabled)
         fetch_full_text = self.config.get("academic", {}).get("fetch_full_text", True)
@@ -828,6 +835,7 @@ Key Themes:
             logger.error(f"Failed to generate academic summary: {e}")
             summary_text = "Failed to generate summary."
             themes = []
+            partial_failure = True
 
         if self.is_cancelled():
             return {"status": "cancelled"}
@@ -887,6 +895,7 @@ Unexplored Research Gaps:
                             gaps.append(cleaned)
         except Exception as e:
             logger.error(f"Failed to generate gaps: {e}")
+            partial_failure = True
 
         if self.is_cancelled():
             return {"status": "cancelled"}
@@ -905,7 +914,8 @@ Unexplored Research Gaps:
             "themes": themes,
             "confidence": avg_methodology,
             "network_stats": network_stats if 'network_stats' in locals() else None,
-            "citation_graph": citation_net if 'citation_net' in locals() else None
+            "citation_graph": citation_net if 'citation_net' in locals() else None,
+            "partial": partial_failure
         }
 
         await tracker.update("exporting", "Generating reports and exporting citation formats...", 0.9)
@@ -983,3 +993,18 @@ Unexplored Research Gaps:
 
         self.final_report = report_data
         return report_data
+
+    def _apply_filters(self, papers: List[Dict], filter_config: Dict) -> List[Dict]:
+        """Apply inclusion/exclusion filters to papers."""
+        from core.filters import FilterConfig, PaperFilter
+        
+        config = FilterConfig(
+            min_year=filter_config.get("min_year"),
+            max_year=filter_config.get("max_year"),
+            min_impact_factor=filter_config.get("min_impact_factor"),
+            allowed_study_designs=filter_config.get("allowed_study_designs", []),
+            include_keywords=filter_config.get("include_keywords", []),
+            exclude_keywords=filter_config.get("exclude_keywords", [])
+        )
+        filter_engine = PaperFilter(config)
+        return filter_engine.apply(papers)

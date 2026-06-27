@@ -19,7 +19,8 @@ load_dotenv()
 logger = logging.getLogger("scrutator.telegram_bot")
 
 def load_config() -> dict:
-    config_path = "./config/settings.yaml"
+    from core.config import get_config_path
+    config_path = get_config_path("settings.yaml")
     if not os.path.exists(config_path):
         return {
             "model": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.7},

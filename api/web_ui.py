@@ -117,10 +117,55 @@ h1, h2, h3, h4 {
     padding: 12px !important;
     border-radius: 8px !important;
 }
+
+/* Mobile-first responsive design */
+@media screen and (max-width: 768px) {
+    .gradio-container {
+        padding: 10px !important;
+    }
+    .gr-row {
+        flex-direction: column !important;
+        gap: 10px !important;
+    }
+    .gr-box {
+        padding: 10px !important;
+    }
+    /* Touch-friendly buttons (min 44px) */
+    .gr-button {
+        min-height: 44px !important;
+        min-width: 44px !important;
+        font-size: 16px !important;
+        padding: 12px 20px !important;
+    }
+    /* Input fields larger on mobile */
+    .gr-textbox textarea {
+        font-size: 16px !important;
+        padding: 12px !important;
+    }
+    /* Collapsible logs */
+    .log-section {
+        max-height: 200px !important;
+        overflow-y: auto !important;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    .gradio-container {
+        padding: 5px !important;
+    }
+    .gr-button {
+        font-size: 14px !important;
+        padding: 10px 16px !important;
+    }
+    .gr-box {
+        padding: 8px !important;
+    }
+}
 """
 
 def load_config() -> dict:
-    config_path = "./config/settings.yaml"
+    from core.config import get_config_path
+    config_path = get_config_path("settings.yaml")
     if not os.path.exists(config_path):
         return {
             "model": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.7},
@@ -134,7 +179,7 @@ def load_config() -> dict:
         config = yaml.safe_load(f)
     
     # Load country_language_map
-    cmap_path = "./config/country_language_map.yaml"
+    cmap_path = get_config_path("country_language_map.yaml")
     if os.path.exists(cmap_path):
         with open(cmap_path, "r", encoding="utf-8") as f:
             cmap_data = yaml.safe_load(f)
@@ -145,7 +190,11 @@ def load_config() -> dict:
 config = load_config()
 agent = ResearchAgent(config)
 
-async def run_research_ui(query, mode, languages, regions, memory_mode, academic_mode, uploaded_pdfs=None, progress=gr.Progress()):
+async def run_research_ui(
+    query, mode, languages, regions, memory_mode, academic_mode, uploaded_pdfs=None,
+    min_year=None, max_year=None, min_impact=None, study_designs=None, include_kws="", exclude_kws="",
+    progress=gr.Progress()
+):
     """Run research and return results to UI."""
     if not query:
         return "Please enter a search query.", None, None, None, None, None, None, "Error: Empty query"
@@ -171,6 +220,32 @@ async def run_research_ui(query, mode, languages, regions, memory_mode, academic
         if academic_mode and uploaded_pdfs:
             from core.scraper import extract_local_pdf
             for idx, f in enumerate(uploaded_pdfs):
+                # Validate file size (max 50MB)
+                try:
+                    file_size = os.path.getsize(f.name)
+                    if file_size > 50 * 1024 * 1024:
+                        logger.warning(f"File {f.name} exceeds max size limit of 50MB. Skipping.")
+                        continue
+                except Exception as e:
+                    logger.error(f"Error checking file size for {f.name}: {e}")
+                    continue
+
+                # Validate file extension
+                if not f.name.lower().endswith(".pdf"):
+                    logger.warning(f"File {f.name} is not a PDF file. Skipping.")
+                    continue
+
+                # Validate magic bytes header (%PDF)
+                try:
+                    with open(f.name, "rb") as pdf_file:
+                        header = pdf_file.read(4)
+                        if header != b"%PDF":
+                            logger.warning(f"File {f.name} does not have a valid PDF header. Skipping.")
+                            continue
+                except Exception as e:
+                    logger.error(f"Error checking magic bytes header for {f.name}: {e}")
+                    continue
+
                 progress(0.05 + (idx / len(uploaded_pdfs)) * 0.05, desc=f"Reading uploaded PDF: {os.path.basename(f.name)}...")
                 pdf_text = extract_local_pdf(f.name)
                 if pdf_text:
@@ -189,6 +264,30 @@ async def run_research_ui(query, mode, languages, regions, memory_mode, academic
         
         agent_mem_mode = "auto" if memory_mode == "ask" else memory_mode
         
+        filter_config = {}
+        if academic_mode:
+            if min_year is not None and min_year != "":
+                try:
+                    filter_config["min_year"] = int(min_year)
+                except ValueError:
+                    pass
+            if max_year is not None and max_year != "":
+                try:
+                    filter_config["max_year"] = int(max_year)
+                except ValueError:
+                    pass
+            if min_impact is not None and min_impact != "":
+                try:
+                    filter_config["min_impact_factor"] = float(min_impact)
+                except ValueError:
+                    pass
+            if study_designs:
+                filter_config["allowed_study_designs"] = study_designs
+            if include_kws and include_kws.strip():
+                filter_config["include_keywords"] = [k.strip() for k in include_kws.split(",") if k.strip()]
+            if exclude_kws and exclude_kws.strip():
+                filter_config["exclude_keywords"] = [k.strip() for k in exclude_kws.split(",") if k.strip()]
+
         report_data = await agent.run_async(
             query=query,
             languages=lang_list,
@@ -197,7 +296,8 @@ async def run_research_ui(query, mode, languages, regions, memory_mode, academic
             memory_mode=agent_mem_mode,
             academic=academic_mode,
             feedback_callback=progress_callback,
-            uploaded_papers=uploaded_papers
+            uploaded_papers=uploaded_papers,
+            filter_config=filter_config if filter_config else None
         )
         
         if report_data.get("status") == "cancelled":
@@ -315,6 +415,17 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                     academic_input = gr.Checkbox(label="Academic Mode (Literature Review)", value=False)
                     uploaded_pdfs_input = gr.File(label="Upload local PDF papers (Optional)", file_count="multiple", file_types=[".pdf"])
                     
+                    with gr.Accordion("📚 Academic Filters (Optional)", open=False):
+                        min_year_ui = gr.Number(label="Minimum Publication Year", precision=0, value=None)
+                        max_year_ui = gr.Number(label="Maximum Publication Year", precision=0, value=None)
+                        min_impact_ui = gr.Number(label="Minimum Impact Factor", value=None)
+                        study_design_ui = gr.CheckboxGroup(
+                            label="Allowed Study Designs",
+                            choices=["rct", "review", "meta-analysis", "observational"]
+                        )
+                        include_keywords_ui = gr.Textbox(label="Include Keywords (comma separated)", placeholder="e.g. quantum, AI")
+                        exclude_keywords_ui = gr.Textbox(label="Exclude Keywords (comma separated)", placeholder="e.g. classical")
+                    
                     with gr.Row():
                         submit_btn = gr.Button("Start Research Agent", elem_classes="accent-btn")
                         cancel_btn = gr.Button("Cancel Research", elem_classes="sec-btn", visible=False)
@@ -337,7 +448,10 @@ with gr.Blocks(css=custom_css, title="Scrutator Research Assistant") as demo:
                 outputs=[submit_btn, cancel_btn]
             ).then(
                 fn=run_research_ui,
-                inputs=[query_input, mode_input, languages_input, regions_input, memory_input, academic_input, uploaded_pdfs_input],
+                inputs=[
+                    query_input, mode_input, languages_input, regions_input, memory_input, academic_input, uploaded_pdfs_input,
+                    min_year_ui, max_year_ui, min_impact_ui, study_design_ui, include_keywords_ui, exclude_keywords_ui
+                ],
                 outputs=[report_output, file_output, latex_output, bib_output, ris_output, csv_output, zip_output, status_box]
             ).then(
                 fn=hide_cancel,

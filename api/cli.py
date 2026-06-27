@@ -23,22 +23,23 @@ logger = logging.getLogger("scrutator.cli")
 
 def load_config() -> dict:
     """Load configuration from settings.yaml."""
-    config_path = "./config/settings.yaml"
+    from core.config import get_config_path
+    config_path = get_config_path("settings.yaml")
     if not os.path.exists(config_path):
         # Fallback empty config structure
         return {
             "model": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.7},
-            "search": {"searxng_url": "http://localhost:8888", "fallback_to_public": true},
+            "search": {"searxng_url": "http://localhost:8888", "fallback_to_public": True},
             "research": {"loop_limits": {"quick": 3, "balanced": 7, "deep": 15}, "confidence_threshold": 85, "min_sources": 10},
-            "memory": {"enabled": true, "storage_type": "json", "storage_path": "./memory_store.json"},
+            "memory": {"enabled": True, "storage_type": "json", "storage_path": "./memory_store.json"},
             "output": {"reports_dir": "./reports"},
-            "translation": {"enabled": true}
+            "translation": {"enabled": True}
         }
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     
     # Load country_language_map if it exists
-    cmap_path = "./config/country_language_map.yaml"
+    cmap_path = get_config_path("country_language_map.yaml")
     if os.path.exists(cmap_path):
         with open(cmap_path, "r", encoding="utf-8") as f:
             cmap_data = yaml.safe_load(f)

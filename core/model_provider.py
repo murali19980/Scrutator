@@ -42,20 +42,36 @@ class ModelProvider:
         self.total_cost = 0.0
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate a response from the LLM and track estimated cost."""
-        if self.provider == "openrouter":
-            response = self._openrouter_generate(prompt, system_prompt)
-        elif self.provider == "openai":
-            response = self._openai_generate(prompt, system_prompt)
-        elif self.provider == "anthropic":
-            response = self._anthropic_generate(prompt, system_prompt)
-        elif self.provider == "ollama":
-            response = self._ollama_generate(prompt, system_prompt)
-        else:
-            raise ValueError(f"Unknown provider: {self.provider}")
-            
-        self._track_usage(prompt, system_prompt or "", response)
-        return response
+        """Generate a response from the LLM and track estimated cost, retrying on transient errors."""
+        import time
+        max_retries = 3
+        backoff = 2.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                if self.provider == "openrouter":
+                    response = self._openrouter_generate(prompt, system_prompt)
+                elif self.provider == "openai":
+                    response = self._openai_generate(prompt, system_prompt)
+                elif self.provider == "anthropic":
+                    response = self._anthropic_generate(prompt, system_prompt)
+                elif self.provider == "ollama":
+                    response = self._ollama_generate(prompt, system_prompt)
+                else:
+                    raise ValueError(f"Unknown provider: {self.provider}")
+                
+                self._track_usage(prompt, system_prompt or "", response)
+                return response
+            except Exception as e:
+                e_str = str(e).lower()
+                is_transient = "rate" in e_str or "429" in e_str or "timeout" in e_str or "connection" in e_str or "50" in e_str or "overloaded" in e_str
+                if is_transient and attempt < max_retries:
+                    sleep_time = backoff ** attempt
+                    logger.warning(f"LLM call failed with transient error: {e}. Retrying in {sleep_time:.2f}s...")
+                    time.sleep(sleep_time)
+                    continue
+                logger.error(f"LLM generation failed after all attempts: {e}")
+                raise
 
     def _track_usage(self, prompt: str, system_prompt: str, response: str):
         """Track input/output tokens and estimate costs."""
