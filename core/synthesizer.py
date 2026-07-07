@@ -120,6 +120,9 @@ Detailed Synthesis:
             }
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
+            e_str = str(e).lower()
+            if "unauthorized" in e_str or "api key" in e_str or "credentials" in e_str or "401" in e_str or "403" in e_str:
+                raise
             return {
                 "summary": "Synthesis failed due to an error.",
                 "key_insights": [],

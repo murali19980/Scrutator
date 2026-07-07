@@ -73,4 +73,7 @@ Justification: [text]"""
             }
         except Exception as e:
             logger.error(f"Confidence scoring failed: {e}")
+            e_str = str(e).lower()
+            if "unauthorized" in e_str or "api key" in e_str or "credentials" in e_str or "401" in e_str or "403" in e_str:
+                raise
             return {"score": 50, "justification": "Scoring failed due to error."}

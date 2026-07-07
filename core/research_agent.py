@@ -168,6 +168,8 @@ class ResearchAgent:
         while current_loop < loop_limit:
             current_loop += 1
             logger.info(f"--- LOOP {current_loop} START ---")
+            urls_before_this_loop = set(previous_urls)
+
 
             # 1. Search for each language
             new_sources = []
@@ -231,7 +233,7 @@ class ResearchAgent:
                 source_count=len(self.all_sources),
                 loop_count=current_loop,
                 max_loops=loop_limit,
-                previous_urls=previous_urls,
+                previous_urls=urls_before_this_loop,
                 current_urls=current_urls,
                 confidence_threshold=confidence_threshold,
                 min_sources=min_sources,
@@ -239,6 +241,7 @@ class ResearchAgent:
             ):
                 logger.info("Stop condition met. Ending research loop.")
                 break
+
 
             # 7. Refine Query for next loop
             refined_query = self._refine_query(query, synthesis["summary"], pref_instruction)
@@ -339,6 +342,9 @@ Output format:
             return questions[:3] or ["What are the next developments?", "Who are the key players?", "What are the limitations?"]
         except Exception as e:
             logger.warning(f"Failed to generate follow-up questions: {e}")
+            e_str = str(e).lower()
+            if "unauthorized" in e_str or "api key" in e_str or "credentials" in e_str or "401" in e_str or "403" in e_str:
+                raise
             return ["What are the next developments?", "Who are the key players?", "What are the limitations?"]
 
     def _run_academic(self, query: str, mode: str, max_loops: Optional[int] = None, feedback_callback = None, uploaded_papers: List[Dict] = None) -> Dict:

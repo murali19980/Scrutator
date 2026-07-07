@@ -95,3 +95,53 @@ def test_research_agent_run(mock_provider_cls, mock_scraper_cls, mock_searcher_c
         mock_scraper.extract.assert_any_call("https://example.com/1")
         mock_scraper.extract.assert_any_call("https://example.com/2")
         mock_should_stop.assert_called_once()
+
+
+@patch("core.research_agent.SearXNGClient")
+@patch("core.research_agent.ContentExtractor")
+@patch("core.research_agent.ModelProvider")
+def test_research_agent_stop_condition(mock_provider_cls, mock_scraper_cls, mock_searcher_cls, temp_config):
+    # Setup mocks
+    mock_searcher = mock_searcher_cls.return_value
+    # On first search return 3 URLs, on second return 0
+    mock_searcher.search.side_effect = [
+        [
+            {"url": "https://example.com/1", "title": "Source 1", "snippet": "Text 1", "language": "en"},
+            {"url": "https://example.com/2", "title": "Source 2", "snippet": "Text 2", "language": "en"},
+            {"url": "https://example.com/3", "title": "Source 3", "snippet": "Text 3", "language": "en"},
+        ],
+        []  # Second loop returns no new sources -> should stop
+    ]
+    
+    mock_scraper = mock_scraper_cls.return_value
+    mock_scraper.extract.side_effect = lambda url: {
+        "url": url,
+        "title": "Page title",
+        "text": f"Scraped text content for {url}",
+        "language": "en"
+    }
+    
+    mock_provider = mock_provider_cls.return_value
+    mock_provider.generate.side_effect = [
+        # Loop 1 Synthesis
+        "Summary:\nResult summary\nKey Insights:\n- Insight 1\nDetailed Synthesis:\nDetailed result",
+        # Loop 1 Confidence Scoring
+        "Score: 60\nJustification: Low confidence.",
+        # Loop 1 Refinement Query
+        "refined search query",
+        # Loop 2 Synthesis (after search returns empty list)
+        "Summary:\nFinal summary\nKey Insights:\n- Insight 1\nDetailed Synthesis:\nDetailed final result",
+        # Loop 2 Confidence Scoring
+        "Score: 60\nJustification: Still low confidence.",
+        # Follow-up questions
+        "1. Followup 1"
+    ]
+    
+    # We do NOT mock should_stop this time. It should run 2 loops.
+    agent = ResearchAgent(temp_config)
+    report_data = agent.run("solid-state battery tech", languages=["en"], mode="quick")
+    
+    assert report_data is not None
+    # We ran 2 loops because loop 1 found 3 new sources, loop 2 found 0 (which triggers should_stop)
+    assert len(agent.loop_history) == 2
+

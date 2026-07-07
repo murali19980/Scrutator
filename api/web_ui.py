@@ -352,15 +352,7 @@ def compress_memories_ui():
     return "Memory store compressed successfully."
 
 # Build UI
-with gr.Blocks(
-    css=custom_css,
-    title="Scrutator Academic",
-    theme=gr.themes.Soft(
-        primary_hue="indigo",
-        secondary_hue="purple",
-        font=gr.themes.GoogleFont("Segoe UI")
-    )
-) as demo:
+with gr.Blocks(title="Scrutator Academic") as demo:
     gr.HTML("<h1 class='header-title'>Scrutator</h1>")
     gr.HTML("<p class='header-subtitle'>Local‑First Multilingual AI Research Assistant</p>")
     
@@ -540,5 +532,11 @@ if __name__ == "__main__":
     demo.launch(
         server_name=server_name,
         server_port=int(os.getenv("SCRUTATOR_WEB_UI_PORT", "7860")),
-        auth=auth_creds
+        auth=auth_creds,
+        css=custom_css,
+        theme=gr.themes.Soft(
+            primary_hue="indigo",
+            secondary_hue="purple",
+            font=gr.themes.GoogleFont("Segoe UI"),
+        ),
     )
