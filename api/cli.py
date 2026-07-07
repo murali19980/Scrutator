@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 
 from core.research_agent import ResearchAgent
 from memory.types import FeedbackMemory
-from memory.approval import apply_memory_interactively
 from tqdm import tqdm
 
 load_dotenv()
@@ -106,20 +105,15 @@ def cli(query, regions, languages, mode, max_loops, memory, feedback, verbose, a
     if regions:
         region_list = [reg.strip().upper() for reg in regions.split(",")]
 
-    # Set up interactive callback for memory approval
-    def memory_callback(recalled_memories):
-        # We wrap the generator to a list
-        return list(apply_memory_interactively(recalled_memories, query))
-
     # Run the agent
-    print("=" * 60)
+    click.echo("=" * 60)
     if academic:
-        print(f"🚀 Starting academic literature review: '{query}'")
-        print(f"🌍 Databases: ArXiv, PubMed, OpenAlex | Mode: {mode}")
+        click.echo(f"🚀 Starting academic literature review: '{query}'")
+        click.echo(f"🌍 Databases: ArXiv, PubMed, OpenAlex | Mode: {mode}")
     else:
-        print(f"🚀 Starting research: '{query}'")
-        print(f"🌍 Languages: {lang_list} | Mode: {mode} | Memory: {memory}")
-    print("=" * 60)
+        click.echo(f"🚀 Starting research: '{query}'")
+        click.echo(f"🌍 Languages: {lang_list} | Mode: {mode} | Memory: {memory}")
+    click.echo("=" * 60)
 
     pbar = None
     if no_progress:

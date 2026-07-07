@@ -118,7 +118,8 @@ Novelty: [score] - [justification]
                         match = re.search(r"\d+", parts[0])
                         if match:
                             scores["methodology"] = int(match.group())
-                    except: pass
+                    except (ValueError, TypeError):
+                        pass
                     if len(parts) > 1:
                         scores["justification"] += f"Methodology: {parts[1].strip()}\n"
             elif "Results" in line:
@@ -128,7 +129,8 @@ Novelty: [score] - [justification]
                         match = re.search(r"\d+", parts[0])
                         if match:
                             scores["results"] = int(match.group())
-                    except: pass
+                    except (ValueError, TypeError):
+                        pass
                     if len(parts) > 1:
                         scores["justification"] += f"Results: {parts[1].strip()}\n"
             elif "Novelty" in line:
@@ -138,7 +140,8 @@ Novelty: [score] - [justification]
                         match = re.search(r"\d+", parts[0])
                         if match:
                             scores["novelty"] = int(match.group())
-                    except: pass
+                    except (ValueError, TypeError):
+                        pass
                     if len(parts) > 1:
                         scores["justification"] += f"Novelty: {parts[1].strip()}\n"
         return scores

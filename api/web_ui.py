@@ -475,7 +475,7 @@ with gr.Blocks(
             )
 
         # System Diagnostics Tab
-        with gr.Tab("⚙️ Settings & Settings"):
+        with gr.Tab("⚙️ Settings & Diagnostics"):
             with gr.Column(elem_classes="glass-panel"):
                 gr.Markdown("### 🗄️ Cache Settings")
                 with gr.Row():

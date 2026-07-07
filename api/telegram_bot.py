@@ -36,7 +36,6 @@ def load_config() -> dict:
 # Global configuration and agent
 config = load_config()
 agent = ResearchAgent(config)
-current_mode = "balanced"
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message."""
@@ -53,24 +52,34 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Change loop limit mode."""
-    global current_mode
+    # Use chat-specific state from context.user_data or default to balanced
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    user_modes = context.user_data if hasattr(context, 'user_data') else {}
+    mode_key = f"research_mode_{chat_id}"
+    current = user_modes.get(mode_key, "balanced")
+    
     if not context.args:
-        await update.message.reply_text(f"Current mode: `{current_mode}`. Set mode using `/mode <quick/balanced/deep>`")
+        await update.message.reply_text(f"Current mode: `{current}`. Set mode using `/mode <quick/balanced/deep>`")
         return
         
     mode = context.args[0].lower()
     if mode in ["quick", "balanced", "deep"]:
-        current_mode = mode
-        await update.message.reply_text(f"✅ Mode changed to: `{current_mode}`")
+        user_modes[mode_key] = mode
+        await update.message.reply_text(f"✅ Mode changed to: `{mode}`")
     else:
         await update.message.reply_text("❌ Invalid mode. Please choose `quick`, `balanced`, or `deep`.")
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check status."""
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    user_modes = context.user_data if hasattr(context, 'user_data') else {}
+    mode_key = f"research_mode_{chat_id}"
+    current = user_modes.get(mode_key, "balanced")
+    
     status_text = (
         "🤖 **Scrutator Status**\n\n"
         "● Pipeline: `Online`\n"
-        f"● Current Loop Mode: `{current_mode}`\n"
+        f"● Current Loop Mode: `{current}`\n"
         f"● Memory System: `{'Enabled' if config.get('memory', {}).get('enabled') else 'Disabled'}`"
     )
     await update.message.reply_text(status_text, parse_mode="Markdown")

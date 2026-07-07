@@ -57,11 +57,8 @@ class Reporter:
         md.append("")
         md.append("## 📝 Detailed Synthesis")
         md.append("")
-        # We can pass the detailed_synthesis in a separate argument or in findings
-        detailed = findings.get("detailed_synthesis", "")
-        if not detailed and hasattr(findings, "get"):
-            # try detailed_synthesis directly
-            detailed = findings.get("detailed_synthesis", "Detailed synthesis not available.")
+        # Retrieve detailed synthesis from findings dict
+        detailed = findings.get("detailed_synthesis", "Detailed synthesis not available.")
         md.append(detailed)
         md.append("")
         md.append("---")

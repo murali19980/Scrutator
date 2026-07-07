@@ -38,7 +38,8 @@ def should_stop(
     if stop_early and confidence >= confidence_threshold and source_count >= min_sources:
         return True
 
-    # No new sources: if fewer than 3 new unique URLs in this round
+    # No new sources: if fewer than 3 new unique URLs found in this round
+    # that were not already seen in prior rounds
     new_urls = current_urls - previous_urls
     if len(new_urls) < 3:
         return True

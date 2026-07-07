@@ -11,13 +11,14 @@ def sanitize_filename(name: str) -> str:
 
 def export_obsidian(papers: List[Dict], scores: List[Dict], report_data: Dict, output_dir: str):
     """Compile the review into a directory of Obsidian markdown notes."""
+    from datetime import datetime
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. Create main overview index note
     index_content = f"""---
 tags: [literature-review, index]
 query: "{report_data.get('query')}"
-date: "{report_data.get('date', '')}"
+date: "{datetime.now().strftime('%Y-%m-%d')}"
 confidence_score: {report_data.get('confidence', 0.0)}
 ---
 # Literature Review: {report_data.get('query')}

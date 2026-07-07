@@ -50,7 +50,7 @@ Justification: [text]"""
             if score_match:
                 try:
                     score = int(score_match.group(1).strip())
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
             
             if justification_match:
@@ -62,7 +62,7 @@ Justification: [text]"""
                     if line.lower().startswith("score:"):
                         try:
                             score = int(line[len("score:"):].strip())
-                        except:
+                        except (ValueError, TypeError):
                             pass
                     elif line.lower().startswith("justification:"):
                         justification = line[len("justification:"):].strip()

@@ -7,8 +7,7 @@ import asyncio
 import anyio
 from typing import List, Dict, Optional, Set
 from datetime import datetime
-from tqdm import tqdm
-from core.feedback import ProgressTracker, ProgressUpdate
+from core.feedback import ProgressTracker
 
 from core.searcher import SearXNGClient
 from core.scraper import ContentExtractor
@@ -157,6 +156,12 @@ class ResearchAgent:
         # Reset state for run
         self.all_sources = []
         self.loop_history = []
+        # Initialize synthesis before loop to ensure it's always defined
+        synthesis = {
+            "summary": "Research is starting.",
+            "key_insights": [],
+            "detailed_synthesis": ""
+        }
 
         logger.info(f"Loop limit: {loop_limit}, Confidence threshold: {confidence_threshold}")
 
@@ -199,7 +204,10 @@ class ResearchAgent:
 
             # 4. Synthesize current findings
             logger.info("Synthesizing current gathered findings...")
-            synthesis = self.synthesizer.synthesize(self.all_sources, query)
+            if self.all_sources:
+                synthesis = self.synthesizer.synthesize(self.all_sources, query)
+            else:
+                logger.info("No sources to synthesize, skipping synthesis.")
 
             # 5. Score confidence
             logger.info("Scoring confidence of synthesized findings...")
@@ -223,7 +231,7 @@ class ResearchAgent:
                 source_count=len(self.all_sources),
                 loop_count=current_loop,
                 max_loops=loop_limit,
-                previous_urls=previous_urls - current_urls,
+                previous_urls=previous_urls,
                 current_urls=current_urls,
                 confidence_threshold=confidence_threshold,
                 min_sources=min_sources,
@@ -355,27 +363,27 @@ Output format:
             if feedback_callback:
                 feedback_callback(f"Found {len(papers)} unique papers. Checking for Open-Access PDFs...")
             from core.scraper import download_and_extract_pdf, get_safe_session, is_safe_url
-            session = get_safe_session()
-            for p in papers:
-                doi = p.get("doi")
-                if doi:
-                    try:
-                        email = self.user_email
-                        unpaywall_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
-                        if is_safe_url(unpaywall_url):
-                            resp = session.get(unpaywall_url, timeout=10)
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                if data.get("is_oa") and data.get("best_oa_location"):
-                                    pdf_url = data["best_oa_location"].get("url_for_pdf")
-                                    if pdf_url:
-                                        logger.info(f"Downloading Open-Access PDF for: {p['title']}...")
-                                        full_text = download_and_extract_pdf(pdf_url)
-                                        if full_text:
-                                            p["full_text"] = full_text
-                                            p["oa_pdf_url"] = pdf_url
-                    except Exception as e:
-                        logger.warning(f"Unpaywall OA check failed for DOI {doi}: {e}")
+            email = os.getenv("USER_EMAIL") or "default@example.com"
+            with get_safe_session() as session:
+                for p in papers:
+                    doi = p.get("doi")
+                    if doi:
+                        try:
+                            unpaywall_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
+                            if is_safe_url(unpaywall_url):
+                                resp = session.get(unpaywall_url, timeout=10)
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    if data.get("is_oa") and data.get("best_oa_location"):
+                                        pdf_url = data["best_oa_location"].get("url_for_pdf")
+                                        if pdf_url:
+                                            logger.info(f"Downloading Open-Access PDF for: {p['title']}...")
+                                            full_text = download_and_extract_pdf(pdf_url)
+                                            if full_text:
+                                                p["full_text"] = full_text
+                                                p["oa_pdf_url"] = pdf_url
+                        except Exception as e:
+                            logger.warning(f"Unpaywall OA check failed for DOI {doi}: {e}")
 
         if feedback_callback:
             feedback_callback("Scoring papers along three dimensions (Methodology, Results, Novelty)...")
@@ -714,73 +722,72 @@ Unexplored Research Gaps:
         if fetch_full_text:
             await tracker.update("extracting", f"Found {len(papers)} papers. Checking for Open-Access PDFs...", 0.2)
             from core.scraper import download_and_extract_pdf, get_safe_session, is_safe_url
-            session = get_safe_session()
-            for idx, p in enumerate(papers):
-                if self.is_cancelled():
-                    return {"status": "cancelled"}
-                progress_val = 0.2 + (0.1 * (idx + 1) / len(papers))
-                await tracker.update("extracting", f"Checking OA PDF for: {p['title'][:40]}...", progress_val)
-                
-                if p.get("full_text"):
-                    continue
+            with get_safe_session() as session:
+                for idx, p in enumerate(papers):
+                    if self.is_cancelled():
+                        return {"status": "cancelled"}
+                    progress_val = 0.2 + (0.1 * (idx + 1) / len(papers))
+                    await tracker.update("extracting", f"Checking OA PDF for: {p['title'][:40]}...", progress_val)
                     
-                doi = p.get("doi")
-                if doi:
-                    try:
-                        email = os.getenv("USER_EMAIL") or self.config.get("user_email", "default@example.com")
-                        unpaywall_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
-                        if is_safe_url(unpaywall_url):
-                            resp = await asyncio.to_thread(session.get, unpaywall_url, timeout=10)
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                if data.get("is_oa") and data.get("best_oa_location"):
-                                    pdf_url = data["best_oa_location"].get("url_for_pdf")
-                                    if pdf_url:
-                                        logger.info(f"Downloading Open-Access PDF (Unpaywall) for: {p['title']}...")
-                                        try:
-                                            full_text = await asyncio.wait_for(
-                                                asyncio.to_thread(download_and_extract_pdf, pdf_url),
-                                                timeout=30.0
-                                            )
-                                            if full_text:
-                                                p["full_text"] = full_text
-                                                p["oa_pdf_url"] = pdf_url
-                                        except asyncio.TimeoutError:
-                                            logger.warning(f"Timeout downloading Unpaywall PDF for {doi}")
-                                        except Exception as e:
-                                            logger.warning(f"Error downloading Unpaywall PDF for {doi}: {e}")
+                    if p.get("full_text"):
+                        continue
                         
-                        # Fallback to CORE API
-                        if not p.get("full_text"):
-                            from core.key_manager import KeyManager
-                            core_key = KeyManager.get_key("core")
-                            if core_key:
-                                core_url = f"https://api.core.ac.uk/v3/works/doi/{doi}"
-                                if is_safe_url(core_url):
-                                    headers = {"Authorization": f"Bearer {core_key}"}
-                                    core_resp = await asyncio.to_thread(session.get, core_url, headers=headers, timeout=10)
-                                    if core_resp.status_code == 200:
-                                        core_data = core_resp.json()
-                                        download_url = core_data.get("downloadUrl")
-                                        if download_url and is_safe_url(download_url):
-                                            logger.info(f"Downloading Open-Access PDF (CORE) for: {p['title']}...")
+                    doi = p.get("doi")
+                    if doi:
+                        try:
+                            email = os.getenv("USER_EMAIL") or self.config.get("user_email", "default@example.com")
+                            unpaywall_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
+                            if is_safe_url(unpaywall_url):
+                                resp = await asyncio.to_thread(session.get, unpaywall_url, timeout=10)
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    if data.get("is_oa") and data.get("best_oa_location"):
+                                        pdf_url = data["best_oa_location"].get("url_for_pdf")
+                                        if pdf_url:
+                                            logger.info(f"Downloading Open-Access PDF (Unpaywall) for: {p['title']}...")
                                             try:
                                                 full_text = await asyncio.wait_for(
-                                                    asyncio.to_thread(download_and_extract_pdf, download_url),
+                                                    asyncio.to_thread(download_and_extract_pdf, pdf_url),
                                                     timeout=30.0
                                                 )
                                                 if full_text:
                                                     p["full_text"] = full_text
-                                                    p["oa_pdf_url"] = download_url
+                                                    p["oa_pdf_url"] = pdf_url
                                             except asyncio.TimeoutError:
-                                                logger.warning(f"Timeout downloading CORE PDF for {doi}")
+                                                logger.warning(f"Timeout downloading Unpaywall PDF for {doi}")
                                             except Exception as e:
-                                                logger.warning(f"Error downloading CORE PDF for {doi}: {e}")
-                                            
-                            else:
-                                logger.info("CORE API Key missing. Skipping CORE PDF download fallback.")
-                    except Exception as e:
-                        logger.warning(f"Full-text extraction check failed for DOI {doi}: {e}")
+                                                logger.warning(f"Error downloading Unpaywall PDF for {doi}: {e}")
+                            
+                            # Fallback to CORE API
+                            if not p.get("full_text"):
+                                from core.key_manager import KeyManager
+                                core_key = KeyManager.get_key("core")
+                                if core_key:
+                                    core_url = f"https://api.core.ac.uk/v3/works/doi/{doi}"
+                                    if is_safe_url(core_url):
+                                        headers = {"Authorization": f"Bearer {core_key}"}
+                                        core_resp = await asyncio.to_thread(session.get, core_url, headers=headers, timeout=10)
+                                        if core_resp.status_code == 200:
+                                            core_data = core_resp.json()
+                                            download_url = core_data.get("downloadUrl")
+                                            if download_url and is_safe_url(download_url):
+                                                logger.info(f"Downloading Open-Access PDF (CORE) for: {p['title']}...")
+                                                try:
+                                                    full_text = await asyncio.wait_for(
+                                                        asyncio.to_thread(download_and_extract_pdf, download_url),
+                                                        timeout=30.0
+                                                    )
+                                                    if full_text:
+                                                        p["full_text"] = full_text
+                                                        p["oa_pdf_url"] = download_url
+                                                except asyncio.TimeoutError:
+                                                    logger.warning(f"Timeout downloading CORE PDF for {doi}")
+                                                except Exception as e:
+                                                    logger.warning(f"Error downloading CORE PDF for {doi}: {e}")
+                                else:
+                                    logger.info("CORE API Key missing. Skipping CORE PDF download fallback.")
+                        except Exception as e:
+                            logger.warning(f"Full-text extraction check failed for DOI {doi}: {e}")
 
         if self.is_cancelled():
             return {"status": "cancelled"}

@@ -77,11 +77,7 @@ class SearXNGClient:
             soup = BeautifulSoup(response.text, "html.parser")
             results = []
             
-            # DuckDuckGo HTML layout uses 'a.result__url' or 'a.result__snippet'
-            links = soup.find_all("a", class_="result__url")
-            snippets = soup.find_all("a", class_="result__snippet")
-            titles = soup.find_all("a", class_="result__snippet") # wait, title is usually result__title
-            # Let's inspect result items:
+            # Parse DuckDuckGo HTML result items
             result_elements = soup.find_all("div", class_="result")
             for elem in result_elements:
                 title_elem = elem.find("a", class_="result__snip") or elem.find("a", class_="result__title")

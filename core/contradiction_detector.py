@@ -63,7 +63,7 @@ If no contradictions exist, output: "No contradictions detected."
             
             # Merge LLM and citation network contradictions
             all_contradictions = []
-            if hasattr(self, '_contradictions') and self._contradictions:
+            if self._contradictions:
                 all_contradictions.extend(self._contradictions)
             all_contradictions.extend(contradictions)
             
@@ -78,12 +78,11 @@ If no contradictions exist, output: "No contradictions detected."
             return unique
         except Exception as e:
             logger.error(f"Contradiction detection failed: {e}")
-            return getattr(self, '_contradictions', [])
+            return self._contradictions
 
     def integrate_citation_network(self, citation_network: 'CitationNetwork'):
         """Integrate contradictions from citation network with LLM detection."""
-        if not hasattr(self, '_contradictions'):
-            self._contradictions = []
+        # _contradictions is always initialized in __init__
         
         network_contradictions = citation_network.get_contradictions()
         for c in network_contradictions:
