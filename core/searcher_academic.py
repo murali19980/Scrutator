@@ -349,6 +349,11 @@ class AcademicSearcher:
 
     def search_all(self, query: str, max_results: int = 50) -> List[Dict]:
         """Search all academic databases and merge results."""
+        # Truncate long queries — OpenAlex returns 400 for very long search strings
+        if len(query) > 200:
+            query = query[:200].rsplit(" ", 1)[0]
+            logger.info(f"Academic query truncated to: {query}")
+
         all_results = []
         try:
             arxiv_results = self.search_arxiv(query, max_results)
@@ -380,11 +385,16 @@ class AcademicSearcher:
 
     async def search_all_async(self, query: str, max_results: int = 50, use_cache: bool = True) -> List[Dict]:
         """Search all databases in parallel and return merged, deduplicated results."""
+        # Truncate long queries — OpenAlex returns 400 for very long search strings
+        if len(query) > 200:
+            query = query[:200].rsplit(" ", 1)[0]
+            logger.info(f"Academic query truncated to: {query}")
+
         from core.cache import SearchCache
         cache = SearchCache()
-        
+
         sources = ["arxiv", "pubmed", "openalex"]
-        
+
         async def search_source_task(source: str):
             if use_cache:
                 cached = cache.get(query, source)

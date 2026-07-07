@@ -50,38 +50,55 @@ class ModelProvider:
             "total_tokens": self.total_input_tokens + self.total_output_tokens
         }
 
-    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate a response from the LLM and track estimated cost, retrying on transient errors."""
+    def generate(self, prompt: str, system_prompt: Optional[str] = None, temperature: Optional[float] = None) -> str:
+        """Generate a response from the LLM and track estimated cost, retrying on transient errors.
+
+        Args:
+            prompt: The user prompt to send to the LLM.
+            system_prompt: Optional system-level instruction.
+            temperature: Optional override for this call only (0.0–1.0).
+                         Temporarily replaces self.temperature for the duration of this call.
+        """
         import time
         max_retries = 3
         backoff = 2.0
-        
-        for attempt in range(max_retries + 1):
-            try:
-                self._last_actual_usage = None
-                if self.provider == "openrouter":
-                    response = self._openrouter_generate(prompt, system_prompt)
-                elif self.provider == "openai":
-                    response = self._openai_generate(prompt, system_prompt)
-                elif self.provider == "anthropic":
-                    response = self._anthropic_generate(prompt, system_prompt)
-                elif self.provider == "ollama":
-                    response = self._ollama_generate(prompt, system_prompt)
-                else:
-                    raise ValueError(f"Unknown provider: {self.provider}")
-                
-                self._track_usage(prompt, system_prompt or "", response, self._last_actual_usage)
-                return response
-            except Exception as e:
-                e_str = str(e).lower()
-                is_transient = "rate" in e_str or "429" in e_str or "timeout" in e_str or "connection" in e_str or "50" in e_str or "overloaded" in e_str
-                if is_transient and attempt < max_retries:
-                    sleep_time = backoff ** attempt
-                    logger.warning(f"LLM call failed with transient error: {e}. Retrying in {sleep_time:.2f}s...")
-                    time.sleep(sleep_time)
-                    continue
-                logger.error(f"LLM generation failed after all attempts: {e}")
-                raise
+
+        # Temporarily override temperature if caller provides one
+        original_temperature = self.temperature
+        if temperature is not None:
+            self.temperature = temperature
+
+        try:
+            for attempt in range(max_retries + 1):
+                try:
+                    self._last_actual_usage = None
+                    if self.provider == "openrouter":
+                        response = self._openrouter_generate(prompt, system_prompt)
+                    elif self.provider == "openai":
+                        response = self._openai_generate(prompt, system_prompt)
+                    elif self.provider == "anthropic":
+                        response = self._anthropic_generate(prompt, system_prompt)
+                    elif self.provider == "ollama":
+                        response = self._ollama_generate(prompt, system_prompt)
+                    else:
+                        raise ValueError(f"Unknown provider: {self.provider}")
+
+                    self._track_usage(prompt, system_prompt or "", response, self._last_actual_usage)
+                    return response
+                except Exception as e:
+                    e_str = str(e).lower()
+                    is_transient = "rate" in e_str or "429" in e_str or "timeout" in e_str or "connection" in e_str or "50" in e_str or "overloaded" in e_str
+                    if is_transient and attempt < max_retries:
+                        sleep_time = backoff ** attempt
+                        logger.warning(f"LLM call failed with transient error: {e}. Retrying in {sleep_time:.2f}s...")
+                        time.sleep(sleep_time)
+                        continue
+                    logger.error(f"LLM generation failed after all attempts: {e}")
+                    raise
+        finally:
+            # Always restore the original temperature
+            self.temperature = original_temperature
+
 
     def _track_usage(self, prompt: str, system_prompt: str, response: str, actual_usage: Optional[Dict[str, int]] = None):
         """Track input/output tokens and estimate costs."""
