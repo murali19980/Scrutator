@@ -38,16 +38,17 @@ def test_searxng_fallback(mock_client):
         return_value=httpx.Response(500)
     )
     
-    # Mocking DuckDuckGo HTML fallback response
-    respx.post("https://html.duckduckgo.com/html/").mock(
+    # Mocking DuckDuckGo Lite fallback response
+    respx.post("https://lite.duckduckgo.com/lite/").mock(
         return_value=httpx.Response(
             200,
             html="""
-            <div class="result">
-                <a class="result__title" href="https://example.com/fallback">Fallback Title</a>
-                <a class="result__url" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ffallback">https://example.com/fallback</a>
-                <a class="result__snippet">Fallback Snippet text</a>
-            </div>
+            <table>
+                <tr>
+                    <td class="result-snippet">Fallback Snippet text</td>
+                </tr>
+            </table>
+            <a class="result-link" href="https://example.com/fallback">Fallback Title</a>
             """
         )
     )
@@ -57,3 +58,4 @@ def test_searxng_fallback(mock_client):
     assert results[0]["url"] == "https://example.com/fallback"
     assert results[0]["title"] == "Fallback Title"
     assert results[0]["snippet"] == "Fallback Snippet text"
+
